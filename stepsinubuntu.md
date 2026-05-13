@@ -120,19 +120,18 @@ cd infra/docker
 docker compose --profile all pull
 ```
 
-### 3. Launch Services
-Depending on how much RAM you allocated to your VMware instance:
+### 3. Launch Services (Optimized for your VM: 8GB RAM / 6 Cores / 52GB Storage)
 
-#### Option A: Full Stack Launch (Requires 16GB+ RAM allocated to VM)
-```bash
-docker compose --profile all up -d
-```
+Since you have allocated **8GB RAM** and **6 CPU Cores** to your VMware instance, launching the entire heavyweight stack simultaneously (including high-memory local LLMs and ClickHouse analytics engines) might trigger Linux out-of-memory (OOM) kills. 
 
-#### Option B: Core Security Services Launch (Requires 8GB+ RAM allocated to VM)
-Starts databases, API gateways, vulnerability engines, and AI triage, omitting heavyweight analytics/ClickHouse.
+To ensure maximum performance and absolute stability within your **8GB RAM** limit while leveraging all **6 cores**, use the tailored **Core Security Services Profile**:
+
 ```bash
+# Starts core databases, API gateways, async workers, vulnerability engines, and AI triage
 docker compose --profile core --profile vuln --profile triage --profile ai up -d
 ```
+
+*(Note: Your **52GB storage** allocation is perfectly sufficient for the Docker base images, PostgreSQL schemas, and persistent Qdrant/Neo4j graph layers.)*
 
 Check startup progress:
 ```bash
