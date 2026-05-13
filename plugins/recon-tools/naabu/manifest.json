@@ -1,0 +1,9 @@
+{
+    "name": "naabu",
+    "version": "1.0.0",
+    "description": "Fast port scanning using naabu",
+    "phase": "port_scanning",
+    "author": "ReconX",
+    "requires": ["naabu"],
+    "supported_os": ["linux", "darwin"]
+}

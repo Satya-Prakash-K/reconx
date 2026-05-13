@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+package reconx.findings;
+
+option go_package = "reconx/findings";
+
+service FindingsService {
+  rpc CreateFinding (CreateFindingRequest) returns (FindingResponse);
+  rpc GetFindings (GetFindingsRequest) returns (GetFindingsResponse);
+  rpc UpdateStatus (UpdateStatusRequest) returns (FindingResponse);
+  rpc SearchFindings (SearchRequest) returns (GetFindingsResponse);
+}
+
+message CreateFindingRequest {
+  string workspace_id = 1;
+  string title = 2;
+  string description = 3;
+  string severity = 4;
+  string finding_type = 5;
+  string source_tool = 6;
+  string affected_url = 7;
+  map<string, string> evidence = 8;
+  repeated string tags = 9;
+}
+
+message FindingResponse {
+  string id = 1;
+  string title = 2;
+  string severity = 3;
+  string status = 4;
+  float risk_score = 5;
+  string ai_summary = 6;
+}
+
+message GetFindingsRequest {
+  string workspace_id = 1;
+  string severity = 2;
+  string status = 3;
+  int32 limit = 4;
+  int32 offset = 5;
+}
+
+message GetFindingsResponse {
+  repeated FindingResponse findings = 1;
+  int32 total = 2;
+}
+
+message UpdateStatusRequest {
+  string finding_id = 1;
+  string new_status = 2;
+}
+
+message SearchRequest {
+  string query = 1;
+  string workspace_id = 2;
+  int32 limit = 3;
+}

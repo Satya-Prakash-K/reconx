@@ -1,0 +1,56 @@
+syntax = "proto3";
+
+package reconx.recon;
+
+option go_package = "reconx/recon";
+
+service ReconService {
+  rpc StartScan (StartScanRequest) returns (StartScanResponse);
+  rpc GetScanStatus (ScanStatusRequest) returns (ScanStatusResponse);
+  rpc CancelScan (CancelScanRequest) returns (CancelScanResponse);
+  rpc StreamProgress (ScanStatusRequest) returns (stream ScanProgress);
+}
+
+message StartScanRequest {
+  string scan_id = 1;
+  string workspace_id = 2;
+  repeated string targets = 3;
+  repeated string phases = 4;
+  map<string, string> config = 5;
+}
+
+message StartScanResponse {
+  string scan_id = 1;
+  string status = 2;
+  string workflow_id = 3;
+}
+
+message ScanStatusRequest {
+  string scan_id = 1;
+}
+
+message ScanStatusResponse {
+  string scan_id = 1;
+  string status = 2;
+  string current_phase = 3;
+  float progress = 4;
+  int32 assets_found = 5;
+  int32 findings_found = 6;
+}
+
+message CancelScanRequest {
+  string scan_id = 1;
+}
+
+message CancelScanResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message ScanProgress {
+  string scan_id = 1;
+  string phase = 2;
+  float progress = 3;
+  string message = 4;
+  int64 timestamp = 5;
+}

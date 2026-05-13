@@ -1,0 +1,91 @@
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: reconx-gateway
+  namespace: reconx
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+    - port:
+        number: 443
+        name: https
+        protocol: HTTPS
+      tls:
+        mode: SIMPLE
+        credentialName: reconx-tls
+      hosts:
+        - "reconx.example.com"
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - "reconx.example.com"
+      tls:
+        httpsRedirect: true
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: reconx-routes
+  namespace: reconx
+spec:
+  hosts:
+    - "reconx.example.com"
+  gateways:
+    - reconx-gateway
+  http:
+    - match:
+        - uri: { prefix: /api/v1/agents }
+        - uri: { prefix: /api/v1/monitor }
+        - uri: { prefix: /api/v1/analysis }
+        - uri: { prefix: /api/v1/browser }
+        - uri: { prefix: /api/v1/workflows }
+      route:
+        - destination: { host: autonomous-engine, port: { number: 8004 } }
+    - match:
+        - uri: { prefix: /api/v1/vuln }
+        - uri: { prefix: /api/v1/fuzzing }
+      route:
+        - destination: { host: vuln-engine, port: { number: 8002 } }
+    - match:
+        - uri: { prefix: /api/v1/triage }
+        - uri: { prefix: /api/v1/reports }
+        - uri: { prefix: /api/v1/knowledge }
+        - uri: { prefix: /api/v1/intel }
+      route:
+        - destination: { host: triage-engine, port: { number: 8003 } }
+    - match:
+        - uri: { prefix: /api/ }
+      route:
+        - destination: { host: api-gateway, port: { number: 8000 } }
+    - match:
+        - uri: { prefix: / }
+      route:
+        - destination: { host: web-dashboard, port: { number: 3000 } }
+---
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: reconx-mtls
+  namespace: reconx
+spec:
+  mtls:
+    mode: STRICT
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: reconx-circuit-breaker
+  namespace: reconx
+spec:
+  host: "*.reconx.svc.cluster.local"
+  trafficPolicy:
+    connectionPool:
+      tcp: { maxConnections: 100 }
+      http: { h2UpgradePolicy: DEFAULT, maxRequestsPerConnection: 10 }
+    outlierDetection:
+      consecutive5xxErrors: 5
+      interval: 30s
+      baseEjectionTime: 60s

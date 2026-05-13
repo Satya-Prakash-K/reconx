@@ -1,0 +1,9 @@
+{
+    "name": "amass",
+    "version": "1.0.0",
+    "description": "In-depth attack surface mapping and asset discovery",
+    "phase": "subdomain_enumeration",
+    "author": "ReconX",
+    "requires": ["amass"],
+    "supported_os": ["linux", "darwin"]
+}

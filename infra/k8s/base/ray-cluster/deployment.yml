@@ -1,0 +1,104 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ray-head
+  namespace: reconx
+  labels:
+    app: ray-head
+    component: ray
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ray-head
+  template:
+    metadata:
+      labels:
+        app: ray-head
+        component: ray
+    spec:
+      containers:
+        - name: ray-head
+          image: rayproject/ray:2.9.3-py311
+          command: ["ray", "start", "--head", "--port=6379",
+                    "--dashboard-host=0.0.0.0", "--dashboard-port=8265", "--block"]
+          ports:
+            - containerPort: 6379
+              name: ray-gcs
+            - containerPort: 8265
+              name: ray-dashboard
+          resources:
+            requests:
+              cpu: 1000m
+              memory: 2Gi
+            limits:
+              cpu: 2000m
+              memory: 4Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ray-worker
+  namespace: reconx
+  labels:
+    app: ray-worker
+    component: ray
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: ray-worker
+  template:
+    metadata:
+      labels:
+        app: ray-worker
+        component: ray
+    spec:
+      containers:
+        - name: ray-worker
+          image: rayproject/ray:2.9.3-py311
+          command: ["ray", "start", "--address=ray-head:6379", "--block"]
+          resources:
+            requests:
+              cpu: 1000m
+              memory: 2Gi
+            limits:
+              cpu: 2000m
+              memory: 4Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ray-head
+  namespace: reconx
+spec:
+  selector:
+    app: ray-head
+  ports:
+    - name: gcs
+      port: 6379
+      targetPort: 6379
+    - name: dashboard
+      port: 8265
+      targetPort: 8265
+  type: ClusterIP
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ray-worker-hpa
+  namespace: reconx
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ray-worker
+  minReplicas: 2
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60

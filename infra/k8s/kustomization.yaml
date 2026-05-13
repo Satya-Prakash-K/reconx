@@ -1,0 +1,20 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: reconx
+
+resources:
+  - base/namespaces.yml
+  - base/api-gateway/deployment.yml
+  - base/worker/deployment.yml
+  - base/vuln-engine/deployment.yml
+  - base/vuln-engine/network-policy.yml
+  - base/triage-engine/deployment.yml
+  - base/autonomous-engine/deployment.yml
+  - base/ray-cluster/deployment.yml
+  - base/browser-pool/deployment.yml
+  - base/istio/service-mesh.yml
+
+commonLabels:
+  app.kubernetes.io/part-of: reconx
+  app.kubernetes.io/managed-by: kustomize

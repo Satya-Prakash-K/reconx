@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: triage-engine
+  namespace: reconx
+  labels:
+    app: triage-engine
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: triage-engine
+  template:
+    metadata:
+      labels:
+        app: triage-engine
+    spec:
+      containers:
+        - name: triage-engine
+          image: reconx/triage-engine:latest
+          ports:
+            - containerPort: 8003
+          envFrom:
+            - configMapRef:
+                name: reconx-config
+            - secretRef:
+                name: reconx-secrets
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: 4000m
+              memory: 4Gi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8003
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8003
+            initialDelaySeconds: 15
+            periodSeconds: 5
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            readOnlyRootFilesystem: false
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: triage-engine
+  namespace: reconx
+spec:
+  selector:
+    app: triage-engine
+  ports:
+    - port: 8003
+      targetPort: 8003
+  type: ClusterIP
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: triage-engine-hpa
+  namespace: reconx
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: triage-engine
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60

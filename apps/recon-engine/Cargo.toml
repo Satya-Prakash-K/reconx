@@ -1,0 +1,38 @@
+[package]
+name = "reconx-engine"
+version = "0.1.0"
+edition = "2021"
+description = "ReconX Recon Engine — Rust core with plugin system"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+async-trait = "0.1"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+trust-dns-resolver = "0.23"
+regex = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+thiserror = "1"
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+tonic = "0.11"
+prost = "0.12"
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json"] }
+redis = { version = "0.25", features = ["tokio-comp", "json"] }
+rdkafka = { version = "0.36", features = ["cmake-build"] }
+ipnetwork = "0.20"
+url = "2"
+glob = "0.3"
+futures = "0.3"
+dashmap = "5"
+
+[dev-dependencies]
+tokio-test = "0.4"
+
+[[bin]]
+name = "reconx-engine"
+path = "src/main.rs"

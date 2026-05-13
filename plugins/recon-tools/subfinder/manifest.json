@@ -1,0 +1,14 @@
+{
+    "name": "subfinder",
+    "version": "1.0.0",
+    "description": "Fast passive subdomain enumeration using ProjectDiscovery subfinder",
+    "phase": "subdomain_enumeration",
+    "author": "ReconX",
+    "requires": ["subfinder"],
+    "supported_os": ["linux", "darwin"],
+    "config_schema": {
+        "timeout": {"type": "integer", "default": 300, "description": "Timeout in seconds"},
+        "threads": {"type": "integer", "default": 10},
+        "sources": {"type": "array", "default": ["all"], "description": "Data sources to use"}
+    }
+}

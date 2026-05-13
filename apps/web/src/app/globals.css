@@ -1,0 +1,90 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@layer base {
+  :root {
+    --background: 222 47% 6%;
+    --foreground: 210 40% 96%;
+    --card: 222 47% 8%;
+    --card-foreground: 210 40% 96%;
+    --primary: 262 83% 58%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 217 33% 14%;
+    --secondary-foreground: 210 40% 96%;
+    --muted: 217 33% 14%;
+    --muted-foreground: 215 20% 55%;
+    --accent: 262 83% 58%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217 33% 18%;
+    --input: 217 33% 18%;
+    --ring: 262 83% 58%;
+    --radius: 0.75rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+}
+
+@layer components {
+  .glass-card {
+    @apply bg-card/50 backdrop-blur-xl border border-white/5 rounded-xl shadow-2xl;
+  }
+
+  .glow-primary {
+    box-shadow: 0 0 20px hsl(262 83% 58% / 0.15),
+                0 0 40px hsl(262 83% 58% / 0.05);
+  }
+
+  .gradient-text {
+    @apply bg-gradient-to-r from-purple-400 via-violet-400 to-indigo-400 bg-clip-text text-transparent;
+  }
+
+  .stat-card {
+    @apply glass-card p-6 hover:border-primary/30 transition-all duration-300;
+  }
+
+  .severity-critical { @apply text-red-400 bg-red-400/10 border-red-400/20; }
+  .severity-high { @apply text-orange-400 bg-orange-400/10 border-orange-400/20; }
+  .severity-medium { @apply text-yellow-400 bg-yellow-400/10 border-yellow-400/20; }
+  .severity-low { @apply text-blue-400 bg-blue-400/10 border-blue-400/20; }
+  .severity-info { @apply text-gray-400 bg-gray-400/10 border-gray-400/20; }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: hsl(222 47% 6%); }
+::-webkit-scrollbar-thumb { background: hsl(217 33% 25%); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: hsl(262 83% 58%); }
+
+/* Animated gradient background */
+.animated-gradient {
+  background: linear-gradient(-45deg, #1a0533, #0f172a, #1e1145, #0c0a1a);
+  background-size: 400% 400%;
+  animation: gradient-shift 15s ease infinite;
+}
+
+@keyframes gradient-shift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+/* Pulse animation for live indicators */
+.pulse-live {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}

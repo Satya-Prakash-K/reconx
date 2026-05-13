@@ -1,0 +1,94 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vuln-engine
+  namespace: reconx
+  labels:
+    app: vuln-engine
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: vuln-engine
+  template:
+    metadata:
+      labels:
+        app: vuln-engine
+    spec:
+      containers:
+        - name: vuln-engine
+          image: reconx/vuln-engine:latest
+          ports:
+            - containerPort: 8002
+          envFrom:
+            - configMapRef:
+                name: reconx-config
+            - secretRef:
+                name: reconx-secrets
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: 4000m
+              memory: 4Gi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8002
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8002
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          # Sandbox: drop all caps, read-only root, non-root user
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            readOnlyRootFilesystem: false
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+              add: ["NET_RAW"]  # Needed for nmap/masscan
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vuln-engine
+  namespace: reconx
+spec:
+  selector:
+    app: vuln-engine
+  ports:
+    - port: 8002
+      targetPort: 8002
+  type: ClusterIP
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: vuln-engine-hpa
+  namespace: reconx
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: vuln-engine
+  minReplicas: 2
+  maxReplicas: 15
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 75

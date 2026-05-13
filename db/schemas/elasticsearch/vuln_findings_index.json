@@ -1,0 +1,33 @@
+{
+  "mappings": {
+    "properties": {
+      "finding_id": { "type": "keyword" },
+      "scan_id": { "type": "keyword" },
+      "workspace_id": { "type": "keyword" },
+      "title": { "type": "text", "analyzer": "standard" },
+      "description": { "type": "text", "analyzer": "standard" },
+      "severity": { "type": "keyword" },
+      "category": { "type": "keyword" },
+      "affected_url": { "type": "keyword" },
+      "param": { "type": "keyword" },
+      "payload": { "type": "text" },
+      "confidence": { "type": "float" },
+      "fp_probability": { "type": "float" },
+      "risk_score": { "type": "float" },
+      "status": { "type": "keyword" },
+      "source_tool": { "type": "keyword" },
+      "evidence": { "type": "object", "enabled": false },
+      "reproduction_steps": { "type": "text" },
+      "ai_summary": { "type": "text" },
+      "request_dump": { "type": "text", "index": false },
+      "response_dump": { "type": "text", "index": false },
+      "created_at": { "type": "date" },
+      "updated_at": { "type": "date" }
+    }
+  },
+  "settings": {
+    "number_of_shards": 2,
+    "number_of_replicas": 1,
+    "index.mapping.total_fields.limit": 500
+  }
+}

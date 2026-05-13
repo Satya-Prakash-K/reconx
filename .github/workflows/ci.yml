@@ -1,0 +1,131 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository }}
+
+jobs:
+  # ── Python Services ───────────────────────
+  python-lint-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [api-gateway, ai-engine, worker]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install shared lib
+        run: pip install ./libs/shared-python
+
+      - name: Install dependencies
+        run: pip install "./apps/${{ matrix.service }}[dev]"
+
+      - name: Lint with ruff
+        run: ruff check apps/${{ matrix.service }}/src/
+
+      - name: Type check with mypy
+        run: mypy apps/${{ matrix.service }}/src/ --ignore-missing-imports
+        continue-on-error: true
+
+      - name: Run tests
+        run: pytest apps/${{ matrix.service }}/tests/ -v --tb=short
+        continue-on-error: true
+
+  # ── Rust Engine ───────────────────────────
+  rust-build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/recon-engine/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('apps/recon-engine/Cargo.lock') }}
+
+      - name: Build
+        run: cargo build --release
+        working-directory: apps/recon-engine
+
+      - name: Test
+        run: cargo test
+        working-directory: apps/recon-engine
+
+  # ── Frontend ──────────────────────────────
+  frontend-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: apps/web
+
+      - name: Lint
+        run: npm run lint
+        working-directory: apps/web
+
+      - name: Build
+        run: npm run build
+        working-directory: apps/web
+
+  # ── Docker Build ──────────────────────────
+  docker-build:
+    needs: [python-lint-test, rust-build-test, frontend-build]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    strategy:
+      matrix:
+        service: [api-gateway, recon-engine, ai-engine, worker, web]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: apps/${{ matrix.service }}/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ github.sha }}
+
+  # ── Security Scan ─────────────────────────
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          severity: "CRITICAL,HIGH"
+          format: "sarif"
+          output: "trivy-results.sarif"

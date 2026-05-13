@@ -1,0 +1,9 @@
+{
+    "name": "nuclei",
+    "version": "1.0.0",
+    "description": "Template-based vulnerability scanning",
+    "phase": "vulnerability_scanning",
+    "author": "ReconX",
+    "requires": ["nuclei"],
+    "supported_os": ["linux", "darwin"]
+}

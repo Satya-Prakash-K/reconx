@@ -1,0 +1,53 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: reconx
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/your-org/reconx.git
+    targetRevision: main
+    path: infra/helm/reconx
+    helm:
+      valueFiles:
+        - values.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: reconx
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: reconx-canary
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/your-org/reconx.git
+    targetRevision: canary
+    path: infra/helm/reconx
+    helm:
+      valueFiles:
+        - values-canary.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: reconx-canary
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

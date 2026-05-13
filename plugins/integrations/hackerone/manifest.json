@@ -1,0 +1,11 @@
+{
+    "name": "hackerone",
+    "version": "1.0.0",
+    "description": "HackerOne bug bounty platform integration — scope import and program management",
+    "type": "integration",
+    "author": "ReconX",
+    "config_schema": {
+        "username": {"type": "string", "required": true},
+        "api_token": {"type": "string", "required": true, "secret": true}
+    }
+}

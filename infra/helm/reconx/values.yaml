@@ -1,0 +1,109 @@
+# ReconX Helm Values — Production Configuration
+
+global:
+  namespace: reconx
+  imagePullPolicy: Always
+
+# ── API Gateway ──────────────────────────────
+apiGateway:
+  replicas: 3
+  image: reconx/api-gateway:latest
+  port: 8000
+  resources:
+    requests: { cpu: 500m, memory: 512Mi }
+    limits: { cpu: 2000m, memory: 2Gi }
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 20
+    targetCPU: 60
+
+# ── Vuln Engine ──────────────────────────────
+vulnEngine:
+  replicas: 2
+  image: reconx/vuln-engine:latest
+  port: 8002
+  resources:
+    requests: { cpu: 1000m, memory: 2Gi }
+    limits: { cpu: 4000m, memory: 8Gi }
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 15
+
+# ── Triage Engine ────────────────────────────
+triageEngine:
+  replicas: 2
+  image: reconx/triage-engine:latest
+  port: 8003
+  resources:
+    requests: { cpu: 500m, memory: 1Gi }
+    limits: { cpu: 4000m, memory: 4Gi }
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+
+# ── Autonomous Engine ────────────────────────
+autonomousEngine:
+  replicas: 2
+  image: reconx/autonomous-engine:latest
+  port: 8004
+  resources:
+    requests: { cpu: 1000m, memory: 2Gi }
+    limits: { cpu: 8000m, memory: 16Gi }
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 20
+
+# ── Web Dashboard ────────────────────────────
+webDashboard:
+  replicas: 2
+  image: reconx/web:latest
+  port: 3000
+
+# ── Ray Cluster ──────────────────────────────
+ray:
+  enabled: true
+  head:
+    resources: { cpu: 2000m, memory: 4Gi }
+  workers:
+    replicas: 4
+    resources: { cpu: 2000m, memory: 4Gi }
+
+# ── Databases ────────────────────────────────
+postgresql:
+  enabled: true
+  auth:
+    postgresPassword: reconx_admin
+    username: reconx
+    password: reconx_secure_password
+    database: reconx
+  primary:
+    persistence: { size: 100Gi }
+
+redis:
+  enabled: true
+  auth: { enabled: false }
+  master:
+    persistence: { size: 10Gi }
+
+elasticsearch:
+  enabled: true
+  replicas: 3
+  resources:
+    requests: { cpu: 1000m, memory: 2Gi }
+
+# ── Istio ────────────────────────────────────
+istio:
+  enabled: true
+  gateway:
+    hosts: ["reconx.example.com"]
+    tls: { mode: SIMPLE }
+
+# ── Monitoring ───────────────────────────────
+monitoring:
+  prometheus: { enabled: true }
+  grafana: { enabled: true }
+  loki: { enabled: true }

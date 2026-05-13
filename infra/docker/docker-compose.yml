@@ -1,0 +1,454 @@
+# ============================================
+# ReconX Docker Compose — Full Stack
+# ============================================
+# Usage:
+#   docker compose --profile core up -d        # Core services only
+#   docker compose --profile monitoring up -d   # Add monitoring
+#   docker compose --profile ai up -d           # Add AI services
+#   docker compose --profile all up -d          # Everything
+
+x-common: &common
+  restart: unless-stopped
+  networks:
+    - reconx
+
+services:
+  # ── Databases ─────────────────────────────
+
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["core", "all"]
+    <<: *common
+    environment:
+      POSTGRES_DB: reconx
+      POSTGRES_USER: reconx
+      POSTGRES_PASSWORD: reconx_secure_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../../db/schemas/postgres/001_initial_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql
+      - ../../db/schemas/postgres/002_vuln_engine_schema.sql:/docker-entrypoint-initdb.d/002_vuln_engine.sql
+      - ../../db/schemas/postgres/003_triage_engine_schema.sql:/docker-entrypoint-initdb.d/003_triage_engine.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reconx"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    profiles: ["core", "all"]
+    <<: *common
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
+    profiles: ["core", "all"]
+    <<: *common
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  neo4j:
+    image: neo4j:5-community
+    profiles: ["core", "all"]
+    <<: *common
+    environment:
+      NEO4J_AUTH: neo4j/neo4j_password
+      NEO4J_PLUGINS: '["apoc"]'
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j_data:/data
+
+  # ── Message Queue ─────────────────────────
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    profiles: ["core", "all"]
+    <<: *common
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    profiles: ["core", "all"]
+    <<: *common
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+  # ── Orchestration ─────────────────────────
+
+  temporal:
+    image: temporalio/auto-setup:1.22
+    profiles: ["core", "all"]
+    <<: *common
+    depends_on:
+      - postgres
+    ports:
+      - "7233:7233"
+    environment:
+      - DB=postgresql
+      - DB_PORT=5432
+      - POSTGRES_USER=reconx
+      - POSTGRES_PWD=reconx_secure_password
+      - POSTGRES_SEEDS=postgres
+
+  temporal-ui:
+    image: temporalio/ui:2.22.0
+    profiles: ["core", "all"]
+    <<: *common
+    depends_on:
+      - temporal
+    ports:
+      - "8088:8080"
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+
+  # ── AI Services ───────────────────────────
+
+  qdrant:
+    image: qdrant/qdrant:v1.7.4
+    profiles: ["ai", "all"]
+    <<: *common
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ai", "all"]
+    <<: *common
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # ── Application Services ──────────────────
+
+  api-gateway:
+    build:
+      context: ../../
+      dockerfile: apps/api-gateway/Dockerfile
+    profiles: ["core", "all"]
+    <<: *common
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - ../../.env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/0
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      NEO4J_URI: bolt://neo4j:7687
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+
+  worker:
+    build:
+      context: ../../
+      dockerfile: apps/worker/Dockerfile
+    profiles: ["core", "all"]
+    <<: *common
+    depends_on:
+      - api-gateway
+      - kafka
+      - temporal
+    env_file:
+      - ../../.env
+    environment:
+      TEMPORAL_HOST: temporal
+      CELERY_BROKER_URL: redis://redis:6379/1
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+
+  ai-engine:
+    build:
+      context: ../../
+      dockerfile: apps/ai-engine/Dockerfile
+    profiles: ["ai", "all"]
+    <<: *common
+    depends_on:
+      - qdrant
+      - redis
+    env_file:
+      - ../../.env
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      OLLAMA_BASE_URL: http://ollama:11434
+
+  web:
+    build:
+      context: ../../
+      dockerfile: apps/web/Dockerfile
+    profiles: ["core", "all"]
+    <<: *common
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api-gateway
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_WS_URL: ws://localhost:8000/ws
+
+  # ── Vulnerability Engine ──────────────────
+
+  vuln-engine:
+    build:
+      context: ../../
+      dockerfile: apps/vuln-engine/Dockerfile
+    profiles: ["vuln", "all"]
+    <<: *common
+    ports:
+      - "8002:8002"
+    depends_on:
+      - api-gateway
+      - kafka
+      - redis
+    env_file:
+      - ../../.env
+    environment:
+      RAY_ADDRESS: ray-head:6379
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      REDIS_URL: redis://redis:6379/0
+      SELENIUM_HUB_URL: http://selenium-hub:4444
+      OLLAMA_BASE_URL: http://ollama:11434
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 4G
+
+  # ── Distributed Computing (Ray) ───────────
+
+  ray-head:
+    image: rayproject/ray:2.9.3-py311
+    profiles: ["vuln", "all"]
+    <<: *common
+    ports:
+      - "6380:6379"
+      - "8265:8265"
+    command: >
+      ray start --head --port=6379 --dashboard-host=0.0.0.0
+      --dashboard-port=8265 --block
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+
+  ray-worker:
+    image: rayproject/ray:2.9.3-py311
+    profiles: ["vuln", "all"]
+    <<: *common
+    depends_on:
+      - ray-head
+    command: >
+      ray start --address=ray-head:6379 --block
+    deploy:
+      mode: replicated
+      replicas: 2
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+
+  # ── Browser Testing (Selenium Grid) ───────
+
+  selenium-hub:
+    image: selenium/hub:4.17
+    profiles: ["vuln", "all"]
+    <<: *common
+    ports:
+      - "4444:4444"
+    environment:
+      GRID_MAX_SESSION: 10
+
+  chrome-node:
+    image: selenium/node-chrome:4.17
+    profiles: ["vuln", "all"]
+    <<: *common
+    depends_on:
+      - selenium-hub
+    environment:
+      SE_EVENT_BUS_HOST: selenium-hub
+      SE_EVENT_BUS_PUBLISH_PORT: 4442
+      SE_EVENT_BUS_SUBSCRIBE_PORT: 4443
+      SE_NODE_MAX_SESSIONS: 3
+    deploy:
+      mode: replicated
+      replicas: 2
+    shm_size: "2g"
+
+  # ── Triage & Report Engine ───────────────
+
+  triage-engine:
+    build:
+      context: ../../
+      dockerfile: apps/triage-engine/Dockerfile
+    profiles: ["triage", "all"]
+    <<: *common
+    ports:
+      - "8003:8003"
+    depends_on:
+      - api-gateway
+      - redis
+      - elasticsearch
+      - neo4j
+      - qdrant
+    env_file:
+      - ../../.env
+    environment:
+      NEO4J_URI: bolt://neo4j:7687
+      QDRANT_URL: http://qdrant:6333
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      REDIS_URL: redis://redis:6379/0
+      OLLAMA_BASE_URL: http://ollama:11434
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 4G
+
+  # ── Autonomous Engine ────────────────────────
+
+  autonomous-engine:
+    build:
+      context: ../../
+      dockerfile: apps/autonomous-engine/Dockerfile
+    profiles: ["autonomous", "all"]
+    <<: *common
+    ports:
+      - "8004:8004"
+    depends_on:
+      - api-gateway
+      - redis
+      - elasticsearch
+      - neo4j
+      - qdrant
+    env_file:
+      - ../../.env
+    environment:
+      NEO4J_URI: bolt://neo4j:7687
+      QDRANT_URL: http://qdrant:6333
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      REDIS_URL: redis://redis:6379/0
+      OLLAMA_BASE_URL: http://ollama:11434
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      CLICKHOUSE_URL: http://clickhouse:8123
+    deploy:
+      resources:
+        limits:
+          cpus: "8"
+          memory: 16G
+
+  # ── ClickHouse (Analytics) ───────────────────
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.1
+    profiles: ["analytics", "all"]
+    <<: *common
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    environment:
+      CLICKHOUSE_DB: reconx
+      CLICKHOUSE_USER: reconx
+      CLICKHOUSE_PASSWORD: reconx_analytics
+
+  # ── Monitoring ────────────────────────────
+
+  prometheus:
+    image: prom/prometheus:v2.49.1
+    profiles: ["monitoring", "all"]
+    <<: *common
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+
+  grafana:
+    image: grafana/grafana:10.3.1
+    profiles: ["monitoring", "all"]
+    <<: *common
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+
+  loki:
+    image: grafana/loki:2.9.4
+    profiles: ["monitoring", "all"]
+    <<: *common
+    ports:
+      - "3100:3100"
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.93.0
+    profiles: ["monitoring", "all"]
+    <<: *common
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+
+volumes:
+  postgres_data:
+  redis_data:
+  es_data:
+  neo4j_data:
+  qdrant_data:
+  ollama_data:
+  prometheus_data:
+  grafana_data:
+  clickhouse_data:
+
+networks:
+  reconx:
+    driver: bridge

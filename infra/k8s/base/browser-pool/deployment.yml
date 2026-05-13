@@ -1,0 +1,110 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: selenium-hub
+  namespace: reconx
+  labels:
+    app: selenium-hub
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: selenium-hub
+  template:
+    metadata:
+      labels:
+        app: selenium-hub
+    spec:
+      containers:
+        - name: selenium-hub
+          image: selenium/hub:4.17
+          ports:
+            - containerPort: 4444
+          env:
+            - name: GRID_MAX_SESSION
+              value: "20"
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chrome-node
+  namespace: reconx
+  labels:
+    app: chrome-node
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: chrome-node
+  template:
+    metadata:
+      labels:
+        app: chrome-node
+    spec:
+      containers:
+        - name: chrome
+          image: selenium/node-chrome:4.17
+          env:
+            - name: SE_EVENT_BUS_HOST
+              value: selenium-hub
+            - name: SE_EVENT_BUS_PUBLISH_PORT
+              value: "4442"
+            - name: SE_EVENT_BUS_SUBSCRIBE_PORT
+              value: "4443"
+            - name: SE_NODE_MAX_SESSIONS
+              value: "3"
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: 1000m
+              memory: 2Gi
+          volumeMounts:
+            - name: dshm
+              mountPath: /dev/shm
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: selenium-hub
+  namespace: reconx
+spec:
+  selector:
+    app: selenium-hub
+  ports:
+    - port: 4444
+      targetPort: 4444
+  type: ClusterIP
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: chrome-node-hpa
+  namespace: reconx
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: chrome-node
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

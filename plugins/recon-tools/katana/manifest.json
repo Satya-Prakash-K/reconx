@@ -1,0 +1,9 @@
+{
+    "name": "katana",
+    "version": "1.0.0",
+    "description": "Web crawling and spidering for URL collection",
+    "phase": "url_collection",
+    "author": "ReconX",
+    "requires": ["katana"],
+    "supported_os": ["linux", "darwin"]
+}

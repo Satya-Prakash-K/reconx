@@ -1,0 +1,10 @@
+{
+    "name": "yeswehack",
+    "version": "1.0.0",
+    "description": "YesWeHack bug bounty platform integration",
+    "type": "integration",
+    "author": "ReconX",
+    "config_schema": {
+        "api_token": {"type": "string", "required": true, "secret": true}
+    }
+}

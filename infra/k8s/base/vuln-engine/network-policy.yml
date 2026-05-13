@@ -1,0 +1,86 @@
+# Network policy restricting vuln-engine sandbox pods
+# Only allows outbound traffic to authorized targets
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vuln-sandbox-policy
+  namespace: reconx
+spec:
+  podSelector:
+    matchLabels:
+      app: vuln-sandbox
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []  # No inbound traffic to sandbox pods
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - port: 6379
+    - to:
+        - podSelector:
+            matchLabels:
+              app: kafka
+      ports:
+        - port: 29092
+    # Allow DNS resolution
+    - to: []
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Allow outbound to internet (for scanning authorized targets)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8       # Block internal cluster network
+              - 172.16.0.0/12    # Block Docker networks
+              - 192.168.0.0/16   # Block private networks
+              - 169.254.0.0/16   # Block link-local
+      ports:
+        - port: 80
+          protocol: TCP
+        - port: 443
+          protocol: TCP
+        - port: 8080
+          protocol: TCP
+        - port: 8443
+          protocol: TCP
+---
+# Network policy for vuln-engine service (less restrictive)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vuln-engine-policy
+  namespace: reconx
+spec:
+  podSelector:
+    matchLabels:
+      app: vuln-engine
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: api-gateway
+      ports:
+        - port: 8002
+  egress:
+    - to:
+        - podSelector: {}  # Allow to all pods in namespace
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - port: 80
+        - port: 443
+        - port: 8080
+        - port: 53
+          protocol: UDP

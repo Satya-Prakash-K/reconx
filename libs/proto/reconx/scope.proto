@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package reconx.scope;
+
+option go_package = "reconx/scope";
+
+service ScopeService {
+  rpc ValidateTarget (ValidateRequest) returns (ValidateResponse);
+  rpc GetScopes (GetScopesRequest) returns (GetScopesResponse);
+  rpc ImportFromPlatform (ImportRequest) returns (ImportResponse);
+}
+
+message ValidateRequest {
+  string target = 1;
+  string workspace_id = 2;
+}
+
+message ValidateResponse {
+  bool in_scope = 1;
+  string reason = 2;
+}
+
+message GetScopesRequest {
+  string program_id = 1;
+}
+
+message ScopeEntry {
+  string id = 1;
+  string value = 2;
+  string scope_type = 3;
+  bool is_in_scope = 4;
+  bool is_wildcard = 5;
+}
+
+message GetScopesResponse {
+  repeated ScopeEntry scopes = 1;
+}
+
+message ImportRequest {
+  string platform = 1;  // hackerone, bugcrowd, intigriti, yeswehack
+  string handle = 2;
+  string api_token = 3;
+}
+
+message ImportResponse {
+  string program_id = 1;
+  int32 scopes_imported = 2;
+  repeated string errors = 3;
+}
