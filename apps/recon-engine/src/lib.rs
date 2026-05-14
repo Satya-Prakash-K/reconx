@@ -1,5 +1,10 @@
 //! ReconX Recon Engine — Core library with plugin system.
 
+pub mod models;
+pub mod plugins;
+pub mod scanners;
+pub mod scope;
+
 use anyhow::Result;
 use dashmap::DashMap;
 use std::sync::Arc;
