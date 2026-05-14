@@ -41,7 +41,7 @@ fi
 if [ ! -d "/opt/xsstrike" ]; then
     log "Installing XSStrike..."
     sudo git clone https://github.com/s0md3v/XSStrike.git /opt/xsstrike
-    sudo pip3 install -r /opt/xsstrike/requirements.txt
+    sudo pip3 install -r /opt/xsstrike/requirements.txt --break-system-packages
 fi
 
 # sqlmap — SQL Injection
