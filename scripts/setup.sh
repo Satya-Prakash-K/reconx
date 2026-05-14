@@ -194,7 +194,7 @@ pip install -e "apps/worker[dev]"
 
 # Install frontend
 cd apps/web
-npm install
+npm install --legacy-peer-deps
 cd ../..
 
 # Build Rust engine
