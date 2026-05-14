@@ -17,7 +17,7 @@ services:
 
   postgres:
     image: postgres:16-alpine
-    profiles: ["core", "all"]
+    profiles: ["core", "vuln", "triage", "autonomous", "all"]
     <<: *common
     environment:
       POSTGRES_DB: reconx
@@ -38,7 +38,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    profiles: ["core", "all"]
+    profiles: ["core", "vuln", "triage", "autonomous", "all"]
     <<: *common
     ports:
       - "6379:6379"
@@ -52,7 +52,7 @@ services:
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
-    profiles: ["core", "all"]
+    profiles: ["core", "vuln", "triage", "autonomous", "all"]
     <<: *common
     environment:
       - discovery.type=single-node
@@ -70,7 +70,7 @@ services:
 
   neo4j:
     image: neo4j:5-community
-    profiles: ["core", "all"]
+    profiles: ["core", "vuln", "triage", "autonomous", "all"]
     <<: *common
     environment:
       NEO4J_AUTH: neo4j/neo4j_password
@@ -85,14 +85,14 @@ services:
 
   zookeeper:
     image: confluentinc/cp-zookeeper:7.6.0
-    profiles: ["core", "all"]
+    profiles: ["core", "vuln", "triage", "autonomous", "all"]
     <<: *common
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
 
   kafka:
     image: confluentinc/cp-kafka:7.6.0
-    profiles: ["core", "all"]
+    profiles: ["core", "vuln", "triage", "autonomous", "all"]
     <<: *common
     depends_on:
       - zookeeper
