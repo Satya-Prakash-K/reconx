@@ -28,6 +28,7 @@ sudo apt-get upgrade -y
 sudo apt-get install -y \
     curl wget git unzip build-essential pkg-config \
     libssl-dev cmake jq dnsutils net-tools \
+    libcurl4-openssl-dev libsasl2-dev libzstd-dev \
     apt-transport-https ca-certificates gnupg lsb-release
 
 # ── Docker ───────────────────────────────────

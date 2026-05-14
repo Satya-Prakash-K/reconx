@@ -17,7 +17,7 @@ sudo apt-get install -y open-vm-tools open-vm-tools-desktop
 
 ### 2. Install Essential System Dependencies
 ```bash
-sudo apt-get install -y git curl wget build-essential apt-transport-https ca-certificates software-properties-common
+sudo apt-get install -y git curl wget build-essential pkg-config cmake libssl-dev libcurl4-openssl-dev libsasl2-dev libzstd-dev apt-transport-https ca-certificates software-properties-common
 ```
 
 ---
