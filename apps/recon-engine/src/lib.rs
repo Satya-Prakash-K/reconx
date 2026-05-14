@@ -1,5 +1,7 @@
 //! ReconX Recon Engine — Core library with plugin system.
 
+#![allow(dead_code)]
+
 pub mod models;
 pub mod plugins;
 pub mod scanners;

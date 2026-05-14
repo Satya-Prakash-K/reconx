@@ -1,15 +1,9 @@
 use anyhow::Result;
 use clap::Parser;
-use tracing::{info, Level};
+use tracing::info;
 use tracing_subscriber::{fmt, EnvFilter};
 
-mod lib;
-mod models;
-mod plugins;
-mod scope;
-mod scanners;
-
-use crate::lib::ReconEngine;
+use reconx_engine::ReconEngine;
 
 #[derive(Parser, Debug)]
 #[command(name = "reconx-engine", about = "ReconX Recon Engine")]
