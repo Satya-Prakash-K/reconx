@@ -8,10 +8,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY libs/shared-python /tmp/shared-python
-RUN pip install --no-cache-dir /tmp/shared-python && rm -rf /tmp/shared-python
+RUN pip install --default-timeout=1000 --no-cache-dir /tmp/shared-python && rm -rf /tmp/shared-python
 
 COPY apps/triage-engine/pyproject.toml .
-RUN pip install --no-cache-dir .
+RUN pip install --default-timeout=1000 --no-cache-dir .
 
 COPY apps/triage-engine/src ./src
 
