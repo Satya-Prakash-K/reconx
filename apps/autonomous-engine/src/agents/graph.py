@@ -43,8 +43,42 @@ try:
 
         async def test_node(state: SwarmState) -> SwarmState:
             state["phase"] = SwarmPhase.TESTING
-            state["reasoning_chain"].append("[testing] Executing test payloads against hypotheses")
-            # Integration point — calls vuln-engine modules
+            state["reasoning_chain"].append("[testing] Executing active payloads against hypotheses")
+            
+            import httpx
+            import urllib.parse
+            
+            async with httpx.AsyncClient(verify=False, timeout=5.0) as client:
+                for h in state.get("hypotheses", []):
+                    url = h.get("url")
+                    param = h.get("param")
+                    cat = h.get("category")
+                    
+                    if not url or not param:
+                        continue
+                        
+                    if cat == "xss":
+                        state["reasoning_chain"].append(f"[testing] Sending XSS payload to {url}?{param}=...")
+                        try:
+                            payload = "<script>alert('reconx')</script>"
+                            test_url = f"{url}?{urllib.parse.quote(param)}={urllib.parse.quote(payload)}"
+                            resp = await client.get(test_url)
+                            if payload in resp.text:
+                                state["reasoning_chain"].append(f"[testing] [VULN] XSS confirmed on {url}")
+                                h["confirmed"] = True
+                                state["findings"].append({
+                                    "title": f"Reflected Cross-Site Scripting (XSS)",
+                                    "affected_url": url,
+                                    "severity": "High",
+                                    "cvss_score": 7.1,
+                                    "exploitability_score": 8.0,
+                                    "impact_score": 6.0,
+                                    "description": f"The parameter '{param}' reflects input without sanitization.",
+                                    "raw_request": f"GET {test_url}",
+                                })
+                        except Exception as e:
+                            pass
+                            
             return state
 
         async def triage_node(state: SwarmState) -> SwarmState:
@@ -93,35 +127,84 @@ try:
 
         return graph.compile()
 
-    async def run_autonomous_session(workspace_id: str, targets: list[str],
+    async def run_autonomous_session(workspace_id: str, session_id: str, targets: list[str],
                                       max_cycles: int = 3) -> SwarmState:
         """Run a full autonomous scanning session."""
+        from reconx_shared.db.redis import RedisManager
+        import asyncio
+        
+        redis_mgr = RedisManager()
         graph = build_swarm_graph()
-        initial = create_initial_state(workspace_id, targets, max_cycles)
+        initial = create_initial_state(workspace_id, session_id, targets, max_cycles)
 
-        logger.info("Autonomous session started", workspace=workspace_id,
-                     targets=len(targets), max_cycles=max_cycles)
+        logger.info("Autonomous session started", workspace=workspace_id, session=session_id)
 
-        result = await graph.ainvoke(initial)
+        try:
+            final_state = initial
+            async for s in graph.astream(initial, stream_mode="values"):
+                progress = (s.get("cycle", 0) / max_cycles) * 100 if max_cycles else 0
+                
+                await redis_mgr.set_scan_progress(
+                    session_id,
+                    s.get("phase", "running"),
+                    min(progress, 100.0),
+                    {
+                        "reasoning_chain": s.get("reasoning_chain", []),
+                        "findings": len(s.get("findings", [])),
+                        "hypotheses": len(s.get("hypotheses", []))
+                    }
+                )
+                await asyncio.sleep(1.0)
+                final_state = s
 
-        logger.info("Autonomous session complete",
-                     cycles=result.get("cycle", 0),
-                     findings=len(result.get("findings", [])),
-                     reasoning_steps=len(result.get("reasoning_chain", [])))
-        return result
+            logger.info("Autonomous session complete", session=session_id)
+            
+            # One final push at 100%
+            await redis_mgr.set_scan_progress(
+                session_id, "complete", 100.0,
+                {
+                    "reasoning_chain": final_state.get("reasoning_chain", []),
+                    "findings": len(final_state.get("findings", [])),
+                    "hypotheses": len(final_state.get("hypotheses", []))
+                }
+            )
+            return final_state
+        except Exception as e:
+            logger.error("Session failed", error=str(e))
+            return initial
 
 except ImportError:
     logger.warning("LangGraph not available — using fallback sequential execution")
 
-    async def run_autonomous_session(workspace_id: str, targets: list[str],
+    async def run_autonomous_session(workspace_id: str, session_id: str, targets: list[str],
                                       max_cycles: int = 3) -> dict:
+        from reconx_shared.db.redis import RedisManager
+        import asyncio
         from src.agents.swarm import (
             create_initial_state, PlannerAgent, ReconAgent, AnalysisAgent,
             HypothesisAgent, MemoryAgent,
         )
-        state = create_initial_state(workspace_id, targets, max_cycles)
+        redis_mgr = RedisManager()
+        state = create_initial_state(workspace_id, session_id, targets, max_cycles)
         agents = [PlannerAgent(), ReconAgent(), AnalysisAgent(), HypothesisAgent(), MemoryAgent()]
+        
         for cycle in range(max_cycles):
             for agent in agents:
                 state = await agent.execute(state)
+                progress = (cycle / max_cycles) * 100
+                await redis_mgr.set_scan_progress(
+                    session_id, state.get("phase", "running"), progress,
+                    {
+                        "reasoning_chain": state.get("reasoning_chain", []),
+                        "findings": len(state.get("findings", [])),
+                        "hypotheses": len(state.get("hypotheses", []))
+                    }
+                )
+                await asyncio.sleep(1.0)
+                
+        await redis_mgr.set_scan_progress(session_id, "complete", 100.0, {
+            "reasoning_chain": state.get("reasoning_chain", []),
+            "findings": len(state.get("findings", [])),
+            "hypotheses": len(state.get("hypotheses", []))
+        })
         return state

@@ -19,21 +19,31 @@ class AgentQueryRequest(BaseModel):
     question: str
 
 
+import uuid
+import asyncio
+
 @router.post("/session/start")
 async def start_session(request: SessionRequest):
     """Start an autonomous agent swarm session."""
     from src.agents.graph import run_autonomous_session
-    result = await run_autonomous_session(
-        request.workspace_id, request.targets, request.max_cycles,
+    
+    session_id = str(uuid.uuid4())
+    
+    # Run in background so the UI doesn't block and can connect to WebSocket
+    asyncio.create_task(
+        run_autonomous_session(
+            request.workspace_id, session_id, request.targets, request.max_cycles,
+        )
     )
+    
     return {
-        "session_id": result.get("session_id", ""),
-        "phase": result.get("phase", ""),
-        "cycle": result.get("cycle", 0),
-        "findings": len(result.get("findings", [])),
-        "hypotheses": len(result.get("hypotheses", [])),
-        "reasoning_chain": result.get("reasoning_chain", []),
-        "metrics": result.get("metrics", {}),
+        "session_id": session_id,
+        "phase": "initializing",
+        "cycle": 0,
+        "findings": 0,
+        "hypotheses": 0,
+        "reasoning_chain": ["[system] Autonomous engine received request. Launching agents..."],
+        "metrics": {},
     }
 
 

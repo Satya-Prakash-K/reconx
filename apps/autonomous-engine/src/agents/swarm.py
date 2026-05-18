@@ -85,9 +85,9 @@ class SwarmState(TypedDict):
     metrics: dict[str, Any]
 
 
-def create_initial_state(workspace_id: str, targets: list[str], max_cycles: int = 5) -> SwarmState:
+def create_initial_state(workspace_id: str, session_id: str, targets: list[str], max_cycles: int = 5) -> SwarmState:
     return SwarmState(
-        session_id=str(uuid.uuid4()),
+        session_id=session_id,
         workspace_id=workspace_id,
         targets=targets,
         phase=SwarmPhase.PLANNING,
@@ -184,21 +184,54 @@ class ReconAgent(SwarmAgent):
         state["phase"] = SwarmPhase.RECON
         targets = state["priority_targets"] or state["targets"]
 
-        state = self._reason(state, f"Scanning {len(targets)} targets for endpoints and assets")
+        state = self._reason(state, f"Scanning {len(targets)} targets for live endpoints and assets")
 
-        # Simulate endpoint discovery
+        import httpx
+        import re
+        from urllib.parse import urljoin, urlparse
+
         endpoints = []
-        for target in targets:
-            endpoints.extend([
-                {"url": f"{target}/api/users", "method": "GET", "params": {"id": "1"}, "priority": 9},
-                {"url": f"{target}/api/auth/login", "method": "POST", "params": {}, "priority": 10},
-                {"url": f"{target}/graphql", "method": "POST", "params": {}, "priority": 8},
-                {"url": f"{target}/api/files/upload", "method": "POST", "params": {}, "priority": 7},
-                {"url": f"{target}/search", "method": "GET", "params": {"q": ""}, "priority": 6},
-            ])
+        visited = set()
+
+        async with httpx.AsyncClient(verify=False, timeout=10.0) as client:
+            for target in targets:
+                if not target.startswith("http"):
+                    target = f"http://{target}"
+                
+                state = self._reason(state, f"[recon] Crawling {target}")
+                try:
+                    resp = await client.get(target)
+                    visited.add(target)
+                    
+                    # Extract links using basic regex
+                    links = re.findall(r'href=[\'"]?([^\'" >]+)', resp.text)
+                    links += re.findall(r'src=[\'"]?([^\'" >]+)', resp.text)
+                    
+                    base_domain = urlparse(target).netloc
+                    
+                    for link in links:
+                        full_url = urljoin(target, link)
+                        parsed = urlparse(full_url)
+                        
+                        # Only keep in-scope URLs
+                        if parsed.netloc == base_domain:
+                            if full_url not in visited and not full_url.endswith(('.css', '.png', '.jpg', '.js', '.ico', '.svg')):
+                                visited.add(full_url)
+                                # Try to detect parameters
+                                params = dict(re.findall(r'([a-zA-Z0-9_]+)=([^&]*)', parsed.query))
+                                endpoints.append({
+                                    "url": full_url.split('?')[0],
+                                    "method": "GET",
+                                    "params": params,
+                                    "priority": 8 if params else 4
+                                })
+                                
+                    state = self._reason(state, f"[recon] Found {len(endpoints)} endpoints from {target}")
+                except Exception as e:
+                    state = self._reason(state, f"[recon] Failed to crawl {target}: {str(e)}")
 
         state["discovered_endpoints"] = endpoints
-        state = self._reason(state, f"Discovered {len(endpoints)} endpoints")
+        state = self._reason(state, f"Total discovered {len(endpoints)} unique endpoints")
         return state
 
 
