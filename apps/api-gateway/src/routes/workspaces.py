@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy import text
 
 from reconx_shared.models.scope import Workspace, WorkspaceCreate
