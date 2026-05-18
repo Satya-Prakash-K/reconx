@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Zap, ChevronRight, GitBranch, Shield, Globe, Server, Lock, AlertTriangle } from "lucide-react";
 import Link from "next/link";
@@ -53,6 +54,64 @@ const NODE_STYLES: Record<string, { bg: string; border: string; icon: any }> = {
 };
 
 export default function AttackGraphPage() {
+  const [nodes, setNodes] = useState<GraphNode[]>([]);
+  const [edges, setEdges] = useState<GraphEdge[]>([]);
+
+  useEffect(() => {
+    const fetchGraph = async () => {
+      try {
+        const res = await fetch("http://localhost:8000/api/v1/workspaces/default/graph?depth=3");
+        if (res.ok) {
+          const data = await res.json();
+          
+          if (!data.nodes || data.nodes.length === 0) {
+             // Fallback to MOCK_NODES if Neo4j is empty so the dashboard isn't completely blank
+             setNodes(MOCK_NODES);
+             setEdges(MOCK_EDGES);
+             return;
+          }
+
+          const newNodes = data.nodes.map((n: any, i: number) => {
+            // Distribute nodes in a circle
+            const angle = (i / data.nodes.length) * Math.PI * 2;
+            const radius = 150 + Math.random() * 80;
+            
+            let type: GraphNode["type"] = "service";
+            const ntype = n.type.toLowerCase();
+            if (ntype === "domain" || ntype === "subdomain") type = "domain";
+            else if (ntype === "ip" || ntype === "port") type = "endpoint";
+            else if (ntype === "finding") type = "vuln";
+            else if (ntype === "technology") type = "service";
+
+            return {
+              id: n.id,
+              label: n.label,
+              type: type,
+              x: 400 + Math.cos(angle) * radius,
+              y: 260 + Math.sin(angle) * radius,
+              severity: n.properties?.severity
+            };
+          });
+          
+          const newEdges = data.edges.map((e: any) => ({
+            from: e.from,
+            to: e.to,
+            label: e.type.replace(/_/g, " ")
+          }));
+          
+          setNodes(newNodes);
+          setEdges(newEdges);
+        }
+      } catch (e) {
+        console.error("Failed to fetch graph", e);
+        setNodes(MOCK_NODES);
+        setEdges(MOCK_EDGES);
+      }
+    };
+    
+    fetchGraph();
+  }, []);
+
   return (
     <div className="min-h-screen">
       <header className="border-b border-white/5 bg-card/30 backdrop-blur-lg sticky top-0 z-50">
@@ -92,9 +151,10 @@ export default function AttackGraphPage() {
             </defs>
 
             {/* Edges */}
-            {MOCK_EDGES.map((edge, i) => {
-              const from = MOCK_NODES.find(n => n.id === edge.from)!;
-              const to = MOCK_NODES.find(n => n.id === edge.to)!;
+            {edges.map((edge, i) => {
+              const from = nodes.find(n => n.id === edge.from);
+              const to = nodes.find(n => n.id === edge.to);
+              if (!from || !to) return null;
               return (
                 <g key={`edge-${i}`}>
                   <line
@@ -115,8 +175,8 @@ export default function AttackGraphPage() {
             })}
 
             {/* Nodes */}
-            {MOCK_NODES.map((node) => {
-              const style = NODE_STYLES[node.type];
+            {nodes.map((node) => {
+              const style = NODE_STYLES[node.type] || NODE_STYLES.service;
               const sevColor = node.severity === "critical" ? "#ef4444" :
                                node.severity === "high" ? "#f97316" :
                                node.severity === "medium" ? "#eab308" : "#8b5cf6";

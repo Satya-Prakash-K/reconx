@@ -44,7 +44,37 @@ const TYPE_ICONS: Record<string, typeof Globe> = {
 };
 
 export default function LiveFeedPage() {
-  const [events] = useState<ReconEvent[]>(MOCK_FEED);
+  const [events, setEvents] = useState<ReconEvent[]>([]);
+
+  useEffect(() => {
+    const fetchEvents = async () => {
+      try {
+        const res = await fetch("http://localhost:8000/api/v1/events/recent?limit=20");
+        if (res.ok) {
+          const data = await res.json();
+          if (!data.events || data.events.length === 0) {
+             // Fallback to mock data if no events to avoid blank screen
+             setEvents(MOCK_FEED);
+             return;
+          }
+          setEvents(data.events.map((e: any) => ({
+            id: e.id,
+            timestamp: new Date(parseInt(e.timestamp)).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+            type: e.event_type === "vuln" || e.event_type === "finding" ? "finding" : e.event_type === "asset" ? "asset" : "endpoint",
+            title: e.data.title || e.data.type || "Discovery Event",
+            detail: e.data.detail || e.data.url || JSON.stringify(e.data).slice(0, 50),
+            severity: e.data.severity
+          })));
+        }
+      } catch (e) {
+        setEvents(MOCK_FEED);
+      }
+    };
+    
+    fetchEvents();
+    const timer = setInterval(fetchEvents, 3000);
+    return () => clearInterval(timer);
+  }, []);
 
   return (
     <div className="min-h-screen">
@@ -92,7 +122,7 @@ export default function LiveFeedPage() {
         <div className="space-y-2">
           <AnimatePresence>
             {events.map((event, i) => {
-              const Icon = TYPE_ICONS[event.type];
+              const Icon = TYPE_ICONS[event.type] || Search;
               return (
                 <motion.div key={event.id}
                   initial={{ opacity: 0, x: -20, height: 0 }}

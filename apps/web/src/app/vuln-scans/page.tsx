@@ -49,32 +49,66 @@ export default function VulnScansPage() {
   const [selectedScan, setSelectedScan] = useState<ScanStatus | null>(null);
   const [isStarting, setIsStarting] = useState(false);
 
-  // Mock data for demonstration
   useEffect(() => {
-    const mockScan: ScanStatus = {
-      scan_id: "demo-001",
-      status: "running",
-      current_phase: "fuzzing",
-      progress: 62,
-      endpoints_tested: 147,
-      endpoints_total: 238,
-      vulns_found: 23,
-      critical: 2,
-      high: 5,
-      medium: 8,
-      low: 6,
-      info: 2,
-      ai_reasoning: [
-        "Identified 238 endpoints from recon data",
-        "Classified 45 high-priority API endpoints",
-        "Generated 89 vulnerability hypotheses",
-        "Passive detection found 12 misconfigurations",
-        "Fuzzing in progress — 62% complete",
-      ],
+    const fetchScans = async () => {
+      try {
+        const res = await fetch("http://localhost:8000/api/v1/scans/");
+        if (!res.ok) return;
+        const data = await res.json();
+        
+        const mapped = data.map((s: any) => ({
+          scan_id: s.id,
+          status: s.status,
+          current_phase: s.status === 'completed' ? 'completed' : 'analysis',
+          progress: s.progress_percent || 0,
+          endpoints_tested: s.total_assets_found || 0,
+          endpoints_total: s.total_assets_found || 0,
+          vulns_found: 0, critical: 0, high: 0, medium: 0, low: 0, info: 0,
+          ai_reasoning: [`Scan initialized: ${s.name}`, `Started at: ${s.created_at}`]
+        }));
+        
+        setScans(mapped);
+        if (mapped.length > 0) {
+          setSelectedScan(mapped[0]);
+        }
+      } catch (error) {
+        console.error("Failed to fetch scans", error);
+      }
     };
-    setScans([mockScan]);
-    setSelectedScan(mockScan);
+    
+    fetchScans();
+    // Poll every 10s for new scans
+    const interval = setInterval(fetchScans, 10000);
+    return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (!selectedScan || (selectedScan.status !== "running" && selectedScan.status !== "queued")) return;
+    
+    const ws = new WebSocket(`ws://localhost:8000/api/v1/scans/ws/${selectedScan.scan_id}`);
+    
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        setSelectedScan(prev => {
+          if (!prev) return prev;
+          const details = data.details || {};
+          return {
+            ...prev,
+            progress: data.progress,
+            current_phase: data.phase,
+            ai_reasoning: details.reasoning || prev.ai_reasoning,
+            endpoints_tested: details.endpoints_tested || prev.endpoints_tested,
+            vulns_found: details.vulns_found || prev.vulns_found,
+            critical: details.critical || prev.critical,
+            high: details.high || prev.high,
+          };
+        });
+      } catch (e) {}
+    };
+    
+    return () => ws.close();
+  }, [selectedScan?.scan_id, selectedScan?.status]);
 
   return (
     <div className="min-h-screen">

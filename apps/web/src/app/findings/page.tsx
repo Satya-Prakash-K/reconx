@@ -57,14 +57,54 @@ const SEV_STYLES: Record<string, string> = {
 };
 
 export default function FindingsPage() {
-  const [findings] = useState<Finding[]>(MOCK_FINDINGS);
+  const [findings, setFindings] = useState<Finding[]>([]);
   const [search, setSearch] = useState("");
   const [filterSev, setFilterSev] = useState<string>("all");
   const [expanded, setExpanded] = useState<string | null>(null);
 
+  useEffect(() => {
+    const fetchFindings = async () => {
+      try {
+        let url = "http://localhost:8000/api/v1/findings/";
+        if (search.length >= 2) {
+          url = `http://localhost:8000/api/v1/findings/search?q=${encodeURIComponent(search)}`;
+        }
+        
+        const res = await fetch(url);
+        if (res.ok) {
+          const data = await res.json();
+          setFindings(data.map((f: any) => ({
+            id: f.id,
+            title: f.title,
+            severity: f.severity,
+            category: f.finding_type || "vuln",
+            affected_url: "Target Asset",
+            confidence: f.confidence || 0.8,
+            status: f.status,
+            source_tool: f.source_tool || "ReconX Engine",
+            description: f.description || f.ai_summary || "No description provided."
+          })));
+        }
+      } catch (e) {
+        console.error("Failed to fetch findings", e);
+      }
+    };
+    
+    const timer = setTimeout(fetchFindings, search ? 300 : 0);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  const updateStatus = async (id: string, newStatus: string) => {
+    try {
+      await fetch(`http://localhost:8000/api/v1/findings/${id}/status?new_status=${newStatus}`, { method: "PATCH" });
+      setFindings(prev => prev.map(f => f.id === id ? { ...f, status: newStatus } : f));
+    } catch (e) {
+      console.error("Failed to update status", e);
+    }
+  };
+
   const filtered = findings.filter((f) => {
     if (filterSev !== "all" && f.severity !== filterSev) return false;
-    if (search && !f.title.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
   });
 
@@ -171,10 +211,16 @@ export default function FindingsPage() {
                     <button className="flex items-center gap-1.5 px-3 py-1.5 bg-primary/10 text-primary rounded-lg text-xs hover:bg-primary/20 transition-colors">
                       <Eye className="w-3.5 h-3.5" /> View Evidence
                     </button>
-                    <button className="flex items-center gap-1.5 px-3 py-1.5 bg-green-500/10 text-green-400 rounded-lg text-xs hover:bg-green-500/20 transition-colors">
+                    <button 
+                      onClick={() => updateStatus(finding.id, "confirmed")}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-green-500/10 text-green-400 rounded-lg text-xs hover:bg-green-500/20 transition-colors"
+                    >
                       <CheckCircle className="w-3.5 h-3.5" /> Confirm
                     </button>
-                    <button className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500/10 text-red-400 rounded-lg text-xs hover:bg-red-500/20 transition-colors">
+                    <button 
+                      onClick={() => updateStatus(finding.id, "false_positive")}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500/10 text-red-400 rounded-lg text-xs hover:bg-red-500/20 transition-colors"
+                    >
                       <XCircle className="w-3.5 h-3.5" /> False Positive
                     </button>
                     <button className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary text-muted-foreground rounded-lg text-xs hover:text-foreground transition-colors">

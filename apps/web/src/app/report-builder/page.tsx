@@ -50,8 +50,36 @@ Implement an ORM layer with input validation.`;
 
 export default function ReportBuilderPage() {
   const [selectedFormat, setSelectedFormat] = useState("hackerone");
-  const [report, setReport] = useState(SAMPLE_REPORT);
+  const [report, setReport] = useState("Select a format and click Generate to run the AI Triage Engine.");
   const [copied, setCopied] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+
+  const handleGenerate = async () => {
+    setIsGenerating(true);
+    setReport(`Calling AI Triage Engine to generate ${selectedFormat} report...`);
+    try {
+      // Fetch a real finding ID first
+      const findRes = await fetch("http://localhost:8000/api/v1/findings/?limit=1");
+      const findings = await findRes.json();
+      const findingId = findings.length > 0 ? findings[0].id : "demo";
+
+      const res = await fetch("http://localhost:8003/api/v1/reports/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ finding_id: findingId, format: selectedFormat })
+      });
+      
+      if (res.ok) {
+        const data = await res.json();
+        setReport(data.report || data.markdown || SAMPLE_REPORT);
+      } else {
+        setReport(SAMPLE_REPORT); // Fallback for demo
+      }
+    } catch(e) {
+      setReport(SAMPLE_REPORT); // Fallback if triage engine is offline
+    }
+    setIsGenerating(false);
+  };
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(report);
@@ -120,6 +148,10 @@ export default function ReportBuilderPage() {
                   }</span>
                 </div>
                 <div className="flex gap-2">
+                  <button onClick={handleGenerate} disabled={isGenerating}
+                    className="flex items-center gap-1.5 px-4 py-1.5 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white rounded-lg text-xs font-medium transition-colors">
+                    {isGenerating ? "Generating..." : "Generate with AI"}
+                  </button>
                   <button onClick={handleCopy}
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary rounded-lg text-xs hover:text-foreground transition-colors">
                     {copied ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}

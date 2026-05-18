@@ -83,3 +83,47 @@ async def get_workspace(workspace_id: uuid.UUID, current_user: dict = Depends(ge
             scan_count=row.scan_count, finding_count=row.finding_count, asset_count=row.asset_count,
             created_at=row.created_at, updated_at=row.updated_at,
         )
+
+
+@router.get("/{workspace_id}/graph")
+async def get_workspace_graph(workspace_id: uuid.UUID, depth: int = Query(3, ge=1, le=5), current_user: dict = Depends(get_current_user)):
+    """Get the Neo4j attack surface graph for a workspace."""
+    from reconx_shared.db.neo4j import Neo4jManager
+    neo4j = Neo4jManager()
+    try:
+        data = await neo4j.get_attack_surface(str(workspace_id), depth)
+        
+        # Format the nodes and relationships for the frontend
+        nodes = []
+        edges = []
+        node_ids = set()
+        
+        for record in data:
+            for node in record.get("nodes", []):
+                node_id = node.element_id
+                if node_id not in node_ids:
+                    node_ids.add(node_id)
+                    labels = list(node.labels)
+                    props = dict(node)
+                    
+                    nodes.append({
+                        "id": node_id,
+                        "type": labels[0] if labels else "Unknown",
+                        "label": props.get("name") or props.get("address") or props.get("value") or props.get("uid") or props.get("title", "Unknown"),
+                        "properties": props
+                    })
+                    
+            for rel in record.get("relationships", []):
+                edges.append({
+                    "id": rel.element_id,
+                    "from": rel.start_node.element_id,
+                    "to": rel.end_node.element_id,
+                    "type": rel.type,
+                    "properties": dict(rel)
+                })
+                
+        return {"workspace_id": str(workspace_id), "nodes": nodes, "edges": edges}
+    except Exception as e:
+        logger.error("Failed to fetch attack surface graph", error=str(e), workspace_id=str(workspace_id))
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Failed to fetch graph data")
+

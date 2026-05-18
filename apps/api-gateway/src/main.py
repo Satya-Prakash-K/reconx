@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.config import settings
-from src.routes import programs, scans, findings, workspaces, auth, ai, health
+from src.routes import programs, scans, findings, workspaces, auth, ai, health, events
 from src.middleware.audit import AuditMiddleware
 from src.middleware.rate_limit import setup_rate_limiting
 
@@ -98,6 +98,7 @@ def create_app() -> FastAPI:
     app.include_router(workspaces.router, prefix="/api/v1/workspaces", tags=["Workspaces"])
     app.include_router(scans.router, prefix="/api/v1/scans", tags=["Scans"])
     app.include_router(findings.router, prefix="/api/v1/findings", tags=["Findings"])
+    app.include_router(events.router, prefix="/api/v1/events", tags=["Events"])
     app.include_router(ai.router, prefix="/api/v1/ai", tags=["AI"])
 
     return app

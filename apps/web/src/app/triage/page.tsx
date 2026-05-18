@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import {
   Zap, ChevronRight, Crosshair, Filter, Search, Brain,
@@ -76,9 +76,48 @@ function CvssBar({ score }: { score: number }) {
 }
 
 export default function TriagePage() {
-  const [findings] = useState<TriagedFinding[]>(MOCK_TRIAGED);
+  const [findings, setFindings] = useState<TriagedFinding[]>([]);
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchTriaged = async () => {
+      try {
+        const res = await fetch("http://localhost:8000/api/v1/findings/");
+        if (!res.ok) return;
+        const data = await res.json();
+        
+        // Filter out low/info for triage demo if we have critical/high/medium
+        let important = data;
+        if (data.some((f: any) => ['critical', 'high', 'medium'].includes(f.severity))) {
+           important = data.filter((f: any) => ['critical', 'high', 'medium'].includes(f.severity));
+        }
+
+        setFindings(important.map((f: any, i: number) => ({
+          id: f.id,
+          title: f.title,
+          severity: f.severity,
+          category: f.finding_type || "vuln",
+          affected_url: "Target Asset",
+          cwe_id: "CWE-Unknown",
+          cwe_name: f.finding_type || "Vulnerability",
+          cvss_score: f.risk_score || (f.severity === 'critical' ? 9.5 : f.severity === 'high' ? 8.0 : 5.0),
+          cvss_vector: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+          owasp_category: "A00:Automated Finding",
+          exploitability_score: f.confidence ? f.confidence * 10 : 8.0,
+          impact_score: f.risk_score || 8.0,
+          priority_rank: i + 1,
+          is_duplicate: false,
+          confidence: f.confidence || 0.9,
+          source_tool: f.source_tool || "ReconX AI Engine"
+        })));
+      } catch (e) {
+        console.error("Failed to fetch triaged findings", e);
+      }
+    };
+    
+    fetchTriaged();
+  }, []);
 
   return (
     <div className="min-h-screen">
