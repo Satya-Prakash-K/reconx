@@ -15,16 +15,8 @@ interface AgentState {
   progress: number;
 }
 
-const MOCK_AGENTS: AgentState[] = [
-  { name: "Planner", status: "completed", reasoning: "Cycle 2: Deep scan strategy — focusing on confirmed SQLi endpoints", progress: 100 },
-  { name: "Recon", status: "completed", reasoning: "Discovered 238 endpoints, 14 new since last cycle", progress: 100 },
-  { name: "Analyzer", status: "completed", reasoning: "Attack surface: 42 high-priority, 12 auth endpoints", progress: 100 },
-  { name: "Hypothesis", status: "completed", reasoning: "Generated 67 hypotheses — XSS (23), SQLi (18), SSRF (8), IDOR (11), Other (7)", progress: 100 },
-  { name: "Tester", status: "active", reasoning: "Testing hypothesis 34/67 — blind SQLi via time-based on /api/users?id=", progress: 51 },
-  { name: "Triager", status: "idle", reasoning: "Waiting for test results...", progress: 0 },
-  { name: "Reporter", status: "idle", reasoning: "Will generate HackerOne reports for confirmed findings", progress: 0 },
-  { name: "Memory", status: "idle", reasoning: "Ready to store findings in knowledge graph", progress: 0 },
-];
+const AGENT_PHASES = ["planning","recon","analysis","hypothesis","testing","triage","reporting","memory"];
+const AGENT_NAMES = ["Planner","Recon","Analyzer","Hypothesis","Tester","Triager","Reporter","Memory"];
 
 const STATUS_COLORS: Record<string, string> = {
   active: "text-green-400 bg-green-500/10 border-green-500/30",
@@ -38,12 +30,26 @@ const STATUS_ICONS: Record<string, typeof Activity> = {
   completed: CheckCircle,
 };
 
+function makeAgents(activePhase?: string, reasoning?: string[]): AgentState[] {
+  const activeIndex = activePhase ? AGENT_PHASES.indexOf(activePhase.toLowerCase()) : -1;
+  return AGENT_NAMES.map((name, i) => {
+    const isActive = i === activeIndex;
+    const isDone = activeIndex >= 0 && i < activeIndex;
+    const tag = name.toLowerCase();
+    const lastMsg = reasoning?.slice().reverse().find(r => r.toLowerCase().includes(`[${tag}]`));
+    return {
+      name,
+      status: isActive ? "active" : isDone ? "completed" : "idle",
+      reasoning: isActive ? (lastMsg || "Running...") : isDone ? (lastMsg || "Done") : "Pending start...",
+      progress: isActive ? 60 : isDone ? 100 : 0,
+    };
+  });
+}
+
 export default function CommandCenterPage() {
-  const [agents, setAgents] = useState<AgentState[]>(MOCK_AGENTS);
+  const [agents, setAgents] = useState<AgentState[]>(makeAgents());
   const [cycle, setCycle] = useState(0);
   const [elapsed, setElapsed] = useState(0);
-  
-  // Scan Form State
   const [targetUrl, setTargetUrl] = useState("");
   const [scanMode, setScanMode] = useState("autonomous");
   const [cycles, setCycles] = useState(3);
@@ -53,64 +59,77 @@ export default function CommandCenterPage() {
     "[system] Awaiting target configuration...",
     "[system] Ready to launch agent swarm."
   ]);
+  const [stats, setStats] = useState({ hypotheses: 0, findings: 0, endpoints: 0 });
 
   useEffect(() => {
     let timer: NodeJS.Timeout;
-    if (isScanning) {
-      timer = setInterval(() => setElapsed(e => e + 1), 1000);
-    }
+    if (isScanning) timer = setInterval(() => setElapsed(e => e + 1), 1000);
     return () => clearInterval(timer);
   }, [isScanning]);
-  
+
   useEffect(() => {
     if (!scanId) return;
-    
-    // Connect to WebSocket for live updates
-    const ws = new WebSocket(`ws://localhost:8000/api/v1/scans/ws/${scanId}`);
-    
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.details && data.details.agents) {
-           setAgents(data.details.agents);
-        }
-        if (data.details && data.details.reasoning) {
-           setReasoningChain(prev => [...data.details.reasoning, ...prev].slice(0, 50));
-        }
-        if (data.details && data.details.cycle) {
-           setCycle(data.details.cycle);
-        }
-        if (data.progress >= 100) {
-           setIsScanning(false);
-        }
-      } catch (e) {}
+    let ws: WebSocket;
+    let retries = 0;
+
+    const connect = () => {
+      ws = new WebSocket(`ws://localhost:8000/api/v1/scans/ws/${scanId}`);
+
+      ws.onmessage = (event) => {
+        try {
+          // Redis stores: { phase, progress, details: { reasoning_chain, findings, hypotheses } }
+          const data = JSON.parse(event.data);
+          const phase: string = data.phase || "";
+          const progress: number = data.progress || 0;
+          const details = data.details || {};
+          const reasoning: string[] = details.reasoning_chain || [];
+          const findingsCount: number = details.findings || 0;
+          const hypothesesCount: number = details.hypotheses || 0;
+
+          if (reasoning.length > 0) setReasoningChain([...reasoning].reverse());
+
+          // Count endpoints from reasoning messages
+          const endpointCount = reasoning.reduce((acc: number, r: string) => {
+            const m = r.match(/(\d+) (unique )?endpoint/);
+            return m ? Math.max(acc, parseInt(m[1])) : acc;
+          }, 0);
+
+          setStats({ hypotheses: hypothesesCount, findings: findingsCount, endpoints: endpointCount });
+          setAgents(makeAgents(phase, reasoning));
+
+          const cycleMatch = [...reasoning].reverse().find(r => r.includes("Cycle"))?.match(/Cycle (\d+)/);
+          if (cycleMatch) setCycle(parseInt(cycleMatch[1]));
+
+          if (progress >= 100 || phase === "complete") setIsScanning(false);
+        } catch (e) {}
+      };
+
+      ws.onerror = () => {
+        if (retries < 8) { retries++; setTimeout(connect, 2500); }
+      };
     };
-    
-    return () => ws.close();
+
+    // Wait 1.5s for backend task to start writing to Redis before connecting
+    const t = setTimeout(connect, 1500);
+    return () => { clearTimeout(t); ws?.close(); };
   }, [scanId]);
 
   const handleStartScan = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!targetUrl) return;
-    
     setIsScanning(true);
     setElapsed(0);
     setCycle(1);
-    setAgents(MOCK_AGENTS.map(a => ({ ...a, status: "idle", progress: 0, reasoning: "Pending start..." })));
+    setStats({ hypotheses: 0, findings: 0, endpoints: 0 });
+    setAgents(makeAgents());
     setReasoningChain(["[system] Initializing agent swarm..."]);
-    
+
     try {
       const res = await fetch("http://localhost:8004/api/v1/agents/session/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          workspace_id: "default",
-          targets: [targetUrl],
-          max_cycles: cycles,
-          mode: scanMode
-        })
+        body: JSON.stringify({ workspace_id: "default", targets: [targetUrl], max_cycles: cycles, mode: scanMode })
       });
-      
       if (res.ok) {
         const data = await res.json();
         setScanId(data.session_id || data.id);
@@ -119,8 +138,8 @@ export default function CommandCenterPage() {
         setReasoningChain(prev => [`[error] Failed to start scan: ${res.statusText}`, ...prev]);
         setIsScanning(false);
       }
-    } catch (error) {
-      setReasoningChain(prev => [`[error] Connection to Autonomous Engine failed. Is it running?`, ...prev]);
+    } catch {
+      setReasoningChain(prev => ["[error] Connection to Autonomous Engine failed. Is it running?", ...prev]);
       setIsScanning(false);
     }
   };
@@ -214,9 +233,9 @@ export default function CommandCenterPage() {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
           {[
             { label: "Active Agents", value: agents.filter(a => a.status === "active").length, icon: Cpu, color: "text-green-400" },
-            { label: "Hypotheses", value: 67, icon: Brain, color: "text-purple-400" },
-            { label: "Findings", value: 12, icon: AlertTriangle, color: "text-orange-400" },
-            { label: "Endpoints", value: 238, icon: Network, color: "text-cyan-400" },
+            { label: "Hypotheses", value: stats.hypotheses, icon: Brain, color: "text-purple-400" },
+            { label: "Findings", value: stats.findings, icon: AlertTriangle, color: "text-orange-400" },
+            { label: "Endpoints", value: stats.endpoints, icon: Network, color: "text-cyan-400" },
           ].map((s, i) => (
             <motion.div key={s.label} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
               transition={{ delay: i * 0.05 }} className="glass-card p-4">
