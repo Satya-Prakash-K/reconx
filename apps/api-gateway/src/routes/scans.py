@@ -81,12 +81,23 @@ async def cancel_scan(scan_id: uuid.UUID, current_user: dict = Depends(get_curre
     return {"message": "Scan cancelled"}
 
 
+@router.get("/progress/{scan_id}")
+async def get_scan_progress_rest(scan_id: str):
+    """REST endpoint for polling scan progress (fallback for WebSocket)."""
+    redis_mgr = RedisManager()
+    progress = await redis_mgr.get_scan_progress(scan_id)
+    if progress:
+        return progress
+    return {"phase": "initializing", "progress": 0, "details": {"reasoning_chain": [], "findings": 0, "hypotheses": 0}}
+
+
 @router.websocket("/ws/{scan_id}")
 async def scan_progress_ws(websocket: WebSocket, scan_id: str):
     """WebSocket for real-time scan progress."""
     await websocket.accept()
     redis_mgr = RedisManager()
     import asyncio
+    heartbeat = 0
     try:
         while True:
             progress = await redis_mgr.get_scan_progress(scan_id)
@@ -94,6 +105,18 @@ async def scan_progress_ws(websocket: WebSocket, scan_id: str):
                 await websocket.send_json(progress)
                 if progress.get("progress", 0) >= 100:
                     break
+            else:
+                # Send heartbeat so frontend knows the connection is alive
+                heartbeat += 1
+                await websocket.send_json({
+                    "phase": "initializing",
+                    "progress": 0,
+                    "details": {
+                        "reasoning_chain": [f"[system] Scan queued... waiting for engine ({heartbeat * 2}s)"],
+                        "findings": 0,
+                        "hypotheses": 0
+                    }
+                })
             await asyncio.sleep(2)
     except Exception:
         pass

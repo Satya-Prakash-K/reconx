@@ -69,49 +69,71 @@ export default function CommandCenterPage() {
 
   useEffect(() => {
     if (!scanId) return;
-    let ws: WebSocket;
-    let retries = 0;
+    let stopped = false;
+    let ws: WebSocket | null = null;
 
-    const connect = () => {
-      ws = new WebSocket(`ws://localhost:8000/api/v1/scans/ws/${scanId}`);
-
-      ws.onmessage = (event) => {
+    // ── Primary: REST polling every 2s (always works) ──────────────
+    const poll = async () => {
+      while (!stopped) {
         try {
-          // Redis stores: { phase, progress, details: { reasoning_chain, findings, hypotheses } }
-          const data = JSON.parse(event.data);
-          const phase: string = data.phase || "";
-          const progress: number = data.progress || 0;
-          const details = data.details || {};
-          const reasoning: string[] = details.reasoning_chain || [];
-          const findingsCount: number = details.findings || 0;
-          const hypothesesCount: number = details.hypotheses || 0;
-
-          if (reasoning.length > 0) setReasoningChain([...reasoning].reverse());
-
-          // Count endpoints from reasoning messages
-          const endpointCount = reasoning.reduce((acc: number, r: string) => {
-            const m = r.match(/(\d+) (unique )?endpoint/);
-            return m ? Math.max(acc, parseInt(m[1])) : acc;
-          }, 0);
-
-          setStats({ hypotheses: hypothesesCount, findings: findingsCount, endpoints: endpointCount });
-          setAgents(makeAgents(phase, reasoning));
-
-          const cycleMatch = [...reasoning].reverse().find(r => r.includes("Cycle"))?.match(/Cycle (\d+)/);
-          if (cycleMatch) setCycle(parseInt(cycleMatch[1]));
-
-          if (progress >= 100 || phase === "complete") setIsScanning(false);
-        } catch (e) {}
-      };
-
-      ws.onerror = () => {
-        if (retries < 8) { retries++; setTimeout(connect, 2500); }
-      };
+          const res = await fetch(`http://localhost:8000/api/v1/scans/progress/${scanId}`);
+          if (res.ok) {
+            const data = await res.json();
+            applyUpdate(data);
+          }
+        } catch {}
+        await new Promise(r => setTimeout(r, 2000));
+      }
     };
 
-    // Wait 1.5s for backend task to start writing to Redis before connecting
-    const t = setTimeout(connect, 1500);
-    return () => { clearTimeout(t); ws?.close(); };
+    // ── Secondary: WebSocket for faster updates ─────────────────────
+    const connectWs = () => {
+      try {
+        ws = new WebSocket(`ws://localhost:8000/api/v1/scans/ws/${scanId}`);
+        ws.onmessage = (event) => {
+          try { applyUpdate(JSON.parse(event.data)); } catch {}
+        };
+        ws.onerror = () => ws?.close();
+      } catch {}
+    };
+
+    // ── Shared update logic ────────────────────────────────────────
+    const applyUpdate = (data: any) => {
+      const phase: string = data.phase || "";
+      const progress: number = data.progress || 0;
+      const details = data.details || {};
+      const reasoning: string[] = details.reasoning_chain || [];
+      const findingsCount: number = details.findings || 0;
+      const hypothesesCount: number = details.hypotheses || 0;
+
+      if (reasoning.length > 0) {
+        setReasoningChain([...reasoning].reverse());
+      }
+
+      const endpointCount = reasoning.reduce((acc: number, r: string) => {
+        const m = r.match(/(\d+) (unique )?endpoint/);
+        return m ? Math.max(acc, parseInt(m[1])) : acc;
+      }, 0);
+
+      setStats({ hypotheses: hypothesesCount, findings: findingsCount, endpoints: endpointCount });
+      if (phase && phase !== "initializing") setAgents(makeAgents(phase, reasoning));
+
+      const cycleMatch = [...reasoning].reverse().find(r => r.includes("Cycle"))?.match(/Cycle (\d+)/);
+      if (cycleMatch) setCycle(parseInt(cycleMatch[1]));
+
+      if (progress >= 100 || phase === "complete") {
+        stopped = true;
+        setIsScanning(false);
+      }
+    };
+
+    setTimeout(poll, 500);
+    setTimeout(connectWs, 1500);
+
+    return () => {
+      stopped = true;
+      ws?.close();
+    };
   }, [scanId]);
 
   const handleStartScan = async (e: React.FormEvent) => {

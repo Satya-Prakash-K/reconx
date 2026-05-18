@@ -21,21 +21,31 @@ class AgentQueryRequest(BaseModel):
 
 import uuid
 import asyncio
+import structlog
+
+_logger = structlog.get_logger(__name__)
+
+async def _run_with_logging(workspace_id: str, session_id: str, targets: list, max_cycles: int):
+    """Wrapper that logs exceptions from the background scan task."""
+    try:
+        _logger.info("Background scan task started", session_id=session_id, targets=targets)
+        from src.agents.graph import run_autonomous_session
+        result = await run_autonomous_session(workspace_id, session_id, targets, max_cycles)
+        _logger.info("Background scan task complete", session_id=session_id,
+                     findings=len(result.get("findings", [])))
+    except Exception as exc:
+        _logger.error("Background scan task FAILED", session_id=session_id, error=str(exc), exc_info=True)
 
 @router.post("/session/start")
 async def start_session(request: SessionRequest):
     """Start an autonomous agent swarm session."""
-    from src.agents.graph import run_autonomous_session
-    
     session_id = str(uuid.uuid4())
-    
+
     # Run in background so the UI doesn't block and can connect to WebSocket
     asyncio.create_task(
-        run_autonomous_session(
-            request.workspace_id, session_id, request.targets, request.max_cycles,
-        )
+        _run_with_logging(request.workspace_id, session_id, request.targets, request.max_cycles)
     )
-    
+
     return {
         "session_id": session_id,
         "phase": "initializing",
