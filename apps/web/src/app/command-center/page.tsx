@@ -72,31 +72,6 @@ export default function CommandCenterPage() {
     let stopped = false;
     let ws: WebSocket | null = null;
 
-    // ── Primary: REST polling every 2s (always works) ──────────────
-    const poll = async () => {
-      while (!stopped) {
-        try {
-          const res = await fetch(`http://localhost:8000/api/v1/scans/progress/${scanId}`);
-          if (res.ok) {
-            const data = await res.json();
-            applyUpdate(data);
-          }
-        } catch {}
-        await new Promise(r => setTimeout(r, 2000));
-      }
-    };
-
-    // ── Secondary: WebSocket for faster updates ─────────────────────
-    const connectWs = () => {
-      try {
-        ws = new WebSocket(`ws://localhost:8000/api/v1/scans/ws/${scanId}`);
-        ws.onmessage = (event) => {
-          try { applyUpdate(JSON.parse(event.data)); } catch {}
-        };
-        ws.onerror = () => ws?.close();
-      } catch {}
-    };
-
     // ── Shared update logic ────────────────────────────────────────
     const applyUpdate = (data: any) => {
       const phase: string = data.phase || "";
@@ -105,36 +80,48 @@ export default function CommandCenterPage() {
       const reasoning: string[] = details.reasoning_chain || [];
       const findingsCount: number = details.findings || 0;
       const hypothesesCount: number = details.hypotheses || 0;
+      const endpointsCount: number = details.endpoints || 0;
 
-      if (reasoning.length > 0) {
-        setReasoningChain([...reasoning].reverse());
-      }
-
-      const endpointCount = reasoning.reduce((acc: number, r: string) => {
-        const m = r.match(/(\d+) (unique )?endpoint/);
-        return m ? Math.max(acc, parseInt(m[1])) : acc;
-      }, 0);
-
-      setStats({ hypotheses: hypothesesCount, findings: findingsCount, endpoints: endpointCount });
+      if (reasoning.length > 0) setReasoningChain([...reasoning].reverse());
+      setStats({ hypotheses: hypothesesCount, findings: findingsCount, endpoints: endpointsCount });
       if (phase && phase !== "initializing") setAgents(makeAgents(phase, reasoning));
 
       const cycleMatch = [...reasoning].reverse().find(r => r.includes("Cycle"))?.match(/Cycle (\d+)/);
       if (cycleMatch) setCycle(parseInt(cycleMatch[1]));
+      if (details.cycle) setCycle(details.cycle);
 
-      if (progress >= 100 || phase === "complete") {
+      if (progress >= 100 || phase === "complete" || phase === "error") {
         stopped = true;
         setIsScanning(false);
       }
     };
 
-    setTimeout(poll, 500);
-    setTimeout(connectWs, 1500);
-
-    return () => {
-      stopped = true;
-      ws?.close();
+    // ── Primary: REST polling every 2s (direct to autonomous engine) ──
+    const poll = async () => {
+      while (!stopped) {
+        try {
+          const res = await fetch(`http://localhost:8004/api/v1/agents/session/${scanId}/progress`);
+          if (res.ok) applyUpdate(await res.json());
+        } catch {}
+        await new Promise(r => setTimeout(r, 2000));
+      }
     };
+
+    // ── Secondary: WebSocket direct to autonomous engine ──────────────
+    const connectWs = () => {
+      try {
+        ws = new WebSocket(`ws://localhost:8004/api/v1/agents/ws/${scanId}`);
+        ws.onmessage = (e) => { try { applyUpdate(JSON.parse(e.data)); } catch {} };
+        ws.onerror = () => ws?.close();
+      } catch {}
+    };
+
+    setTimeout(poll, 300);
+    setTimeout(connectWs, 800);
+
+    return () => { stopped = true; ws?.close(); };
   }, [scanId]);
+
 
   const handleStartScan = async (e: React.FormEvent) => {
     e.preventDefault();
