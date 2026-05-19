@@ -1,0 +1,11 @@
+# Force Unix line endings for files that run in Linux containers
+*.sql text eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+Dockerfile text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Windows-safe files
+*.md text eol=crlf
+*.txt text eol=crlf
