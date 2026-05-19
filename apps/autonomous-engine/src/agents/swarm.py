@@ -175,75 +175,187 @@ class PlannerAgent(SwarmAgent):
 # ── Recon Agent ──────────────────────────────
 
 class ReconAgent(SwarmAgent):
-    """Performs continuous reconnaissance and change detection."""
+    """Deep recursive crawler — 5 levels, forms, robots.txt, sitemap, JS endpoints."""
 
     def __init__(self):
         super().__init__("recon", "reconnaissance")
 
+    # Common API paths to probe
+    _API_PATHS = [
+        "/api/", "/api/v1/", "/api/v2/", "/graphql", "/swagger.json",
+        "/openapi.json", "/api-docs", "/.env", "/robots.txt", "/sitemap.xml",
+        "/admin/", "/login", "/register", "/upload", "/search",
+        "/api/users", "/api/auth", "/api/products", "/api/orders",
+    ]
+    _SKIP_EXTS = {'.css','.png','.jpg','.jpeg','.gif','.ico','.svg',
+                  '.woff','.woff2','.ttf','.eot','.mp4','.mp3','.pdf','.zip'}
+
     async def execute(self, state: SwarmState) -> SwarmState:
         state["phase"] = SwarmPhase.RECON
         targets = state["priority_targets"] or state["targets"]
-
         state = self._reason(state, f"Scanning {len(targets)} targets for live endpoints and assets")
 
-        import httpx
-        import re
-        from urllib.parse import urljoin, urlparse
+        import httpx, re
+        from urllib.parse import urljoin, urlparse, parse_qs
+        from collections import deque
 
-        endpoints = []
-        visited = set()
+        try:
+            from bs4 import BeautifulSoup
+            _bs4 = True
+        except ImportError:
+            _bs4 = False
+
+        all_endpoints: list[dict] = []
+        visited: set[str] = set()
 
         headers = {
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.5",
         }
 
-        async with httpx.AsyncClient(
-            verify=False,
-            timeout=15.0,
-            follow_redirects=True,
-            headers=headers,
-        ) as client:
+        async with httpx.AsyncClient(verify=False, timeout=12.0,
+                                     follow_redirects=True, headers=headers) as client:
             for target in targets:
                 if not target.startswith("http"):
                     target = f"http://{target}"
+                base = urlparse(target)
+                base_origin = f"{base.scheme}://{base.netloc}"
+                base_domain = base.netloc
+                endpoints: list[dict] = []
 
                 state = self._reason(state, f"Crawling {target}")
-                try:
-                    resp = await client.get(target)
-                    visited.add(str(resp.url))  # use final URL after redirects
 
-                    # Extract links using basic regex
-                    links = re.findall(r'href=[\'"]?([^\'" >]+)', resp.text)
-                    links += re.findall(r'action=[\'"]?([^\'" >]+)', resp.text)
+                # ── robots.txt + sitemap ────────────────────────
+                for path in ["/robots.txt", "/sitemap.xml"]:
+                    try:
+                        r = await client.get(base_origin + path)
+                        if r.status_code == 200:
+                            urls_found = re.findall(r'https?://[^\s<>"\']+', r.text)
+                            disallows = re.findall(r'Disallow:\s*(\S+)', r.text)
+                            for u in urls_found + [base_origin + d for d in disallows]:
+                                if base_domain in u:
+                                    visited.add(u)
+                                    pq = urlparse(u)
+                                    params = {k: v[0] for k, v in parse_qs(pq.query).items()}
+                                    endpoints.append({"url": u.split("?")[0], "method": "GET",
+                                                      "params": params, "source": "robots/sitemap",
+                                                      "priority": 7 if params else 5})
+                    except Exception:
+                        pass
 
-                    base_domain = urlparse(str(resp.url)).netloc
+                # ── Probe common API paths ──────────────────────
+                for api_path in self._API_PATHS:
+                    url = base_origin + api_path
+                    if url not in visited:
+                        try:
+                            r = await client.get(url)
+                            if r.status_code in (200, 201, 301, 302, 403, 405):
+                                visited.add(url)
+                                endpoints.append({"url": url, "method": "GET", "params": {},
+                                                  "source": "api_probe", "priority": 8,
+                                                  "status": r.status_code})
+                        except Exception:
+                            pass
 
-                    for link in links:
-                        full_url = urljoin(str(resp.url), link)
-                        parsed = urlparse(full_url)
+                # ── BFS 5-level crawler ─────────────────────────
+                queue: deque[tuple[str, int]] = deque([(target, 0)])
+                visited.add(target)
 
-                        # Only keep in-scope URLs
-                        if parsed.netloc == base_domain:
-                            if full_url not in visited and not full_url.endswith(
-                                ('.css', '.png', '.jpg', '.js', '.ico', '.svg', '.woff', '.woff2', '.ttf')
-                            ):
+                while queue:
+                    current_url, depth = queue.popleft()
+                    if depth > 5:
+                        continue
+                    try:
+                        resp = await client.get(current_url)
+                        content_type = resp.headers.get("content-type", "")
+
+                        # ── JS endpoint extraction ──────────────
+                        if "javascript" in content_type:
+                            js_urls = re.findall(
+                                r'["\'](/(?:api|v\d|graphql|admin|auth|user|search|upload)[^"\'?\s]{0,80})',
+                                resp.text)
+                            for ju in js_urls:
+                                full = base_origin + ju
+                                if full not in visited:
+                                    visited.add(full)
+                                    endpoints.append({"url": full, "method": "GET", "params": {},
+                                                      "source": "js_extraction", "priority": 8})
+                            continue
+
+                        if "html" not in content_type and depth > 0:
+                            continue
+
+                        # ── HTML parsing ────────────────────────
+                        if _bs4:
+                            soup = BeautifulSoup(resp.text, "lxml")
+                            # Forms
+                            for form in soup.find_all("form"):
+                                action = form.get("action", "")
+                                method = (form.get("method") or "GET").upper()
+                                form_url = urljoin(str(resp.url), action) if action else str(resp.url)
+                                if urlparse(form_url).netloc == base_domain:
+                                    inputs = {
+                                        inp.get("name"): inp.get("value", "")
+                                        for inp in form.find_all("input")
+                                        if inp.get("name")
+                                    }
+                                    if form_url not in visited:
+                                        visited.add(form_url)
+                                        endpoints.append({"url": form_url, "method": method,
+                                                          "params": inputs, "source": "form",
+                                                          "priority": 9 if inputs else 6})
+                            # Links
+                            raw_links = [a.get("href","") for a in soup.find_all("a", href=True)]
+                            raw_links += [s.get("src","") for s in soup.find_all("script", src=True)]
+                        else:
+                            raw_links = re.findall(r'href=[\'"]?([^\'" >]+)', resp.text)
+                            raw_links += re.findall(r'action=[\'"]?([^\'" >]+)', resp.text)
+                            raw_links += re.findall(r'src=[\'"]?([^\'" >]+\.js[^\'" >]*)', resp.text)
+
+                        for link in raw_links:
+                            if not link or link.startswith(("#","mailto:","javascript:","tel:")):
+                                continue
+                            full_url = urljoin(str(resp.url), link)
+                            parsed = urlparse(full_url)
+                            if parsed.netloc != base_domain:
+                                continue
+                            ext = "." + full_url.rsplit(".", 1)[-1].split("?")[0].lower() if "." in full_url else ""
+                            if ext in self._SKIP_EXTS:
+                                # Still queue JS files for endpoint extraction
+                                if full_url.endswith(".js") and full_url not in visited:
+                                    visited.add(full_url)
+                                    queue.append((full_url, depth + 1))
+                                continue
+                            if full_url not in visited:
                                 visited.add(full_url)
-                                params = dict(re.findall(r'([a-zA-Z0-9_]+)=([^&]*)', parsed.query))
+                                params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
                                 endpoints.append({
-                                    "url": full_url.split('?')[0],
+                                    "url": full_url.split("?")[0],
                                     "method": "GET",
                                     "params": params,
-                                    "priority": 9 if params else 4
+                                    "source": "crawler",
+                                    "priority": 9 if params else 5
                                 })
+                                if depth < 5:
+                                    queue.append((full_url, depth + 1))
 
-                    state = self._reason(state, f"Found {len(endpoints)} endpoints from {target}")
-                except Exception as e:
-                    state = self._reason(state, f"Failed to crawl {target}: {type(e).__name__}: {str(e)[:100]}")
+                    except Exception:
+                        pass
 
-        state["discovered_endpoints"] = endpoints
-        state = self._reason(state, f"Total discovered {len(endpoints)} unique endpoints")
+                state = self._reason(state, f"Found {len(endpoints)} endpoints from {target}")
+                all_endpoints.extend(endpoints)
+
+        # Deduplicate by URL
+        seen_urls: set[str] = set()
+        deduped = []
+        for ep in all_endpoints:
+            if ep["url"] not in seen_urls:
+                seen_urls.add(ep["url"])
+                deduped.append(ep)
+
+        state["discovered_endpoints"] = deduped
+        state = self._reason(state, f"Total discovered {len(deduped)} unique endpoints")
         return state
 
 
@@ -297,32 +409,104 @@ class HypothesisAgent(SwarmAgent):
     async def execute(self, state: SwarmState) -> SwarmState:
         state["phase"] = SwarmPhase.HYPOTHESIS
         endpoints = state["classified_endpoints"]
+        policy = state.get("policy", {})
+        allowed = policy.get("allowed_tests", [
+            "xss","sqli","lfi","ssrf","csrf","cors","idor",
+            "open_redirect","ssti","xxe","cmdi","misconfig","graphql","jwt"
+        ])
 
         state = self._reason(state, f"Generating hypotheses for {len(endpoints)} classified endpoints")
 
         hypotheses = []
-        for ep in endpoints[:20]:
+        for ep in endpoints[:50]:  # cap at 50 to avoid explosion
             url = ep.get("url", "")
             params = ep.get("params", {})
+            method = ep.get("method", "GET")
+            source = ep.get("source", "")
+            lower_url = url.lower()
 
-            if params:
-                for param in params:
-                    hypotheses.append({"url": url, "param": param, "category": "xss", "confidence": 0.7,
-                                       "reasoning": f"Parameter '{param}' may reflect user input"})
-                    hypotheses.append({"url": url, "param": param, "category": "sqli", "confidence": 0.6,
-                                       "reasoning": f"Parameter '{param}' may be used in DB query"})
-            if "graphql" in url:
-                hypotheses.append({"url": url, "param": "", "category": "graphql", "confidence": 0.8,
-                                   "reasoning": "GraphQL endpoint — check introspection, depth, batching"})
-            if "auth" in url or "login" in url:
-                hypotheses.append({"url": url, "param": "", "category": "auth_flaw", "confidence": 0.7,
-                                   "reasoning": "Auth endpoint — check rate limiting, credential stuffing"})
-            if "upload" in url:
-                hypotheses.append({"url": url, "param": "", "category": "file_upload", "confidence": 0.8,
-                                   "reasoning": "Upload endpoint — check file type restrictions"})
+            for param in params:
+                pl = param.lower()
+                # Injection tests for every parameter
+                if "xss" in allowed:
+                    hypotheses.append({"url": url, "param": param, "method": method,
+                        "category": "xss", "confidence": 0.7,
+                        "reasoning": f"Param '{param}' may reflect input in HTML"})
+                if "sqli" in allowed:
+                    hypotheses.append({"url": url, "param": param, "method": method,
+                        "category": "sqli", "confidence": 0.65,
+                        "reasoning": f"Param '{param}' may be used in SQL query"})
+                if "ssti" in allowed:
+                    hypotheses.append({"url": url, "param": param, "method": method,
+                        "category": "ssti", "confidence": 0.5,
+                        "reasoning": f"Param '{param}' may be passed to a template engine"})
+                # File/path params → LFI
+                if any(k in pl for k in ["page","file","path","include","doc","template","load","read"]):
+                    if "lfi" in allowed:
+                        hypotheses.append({"url": url, "param": param, "method": method,
+                            "category": "lfi", "confidence": 0.8,
+                            "reasoning": f"Param '{param}' looks like a file include"})
+                # URL/redirect params → SSRF + Open Redirect
+                if any(k in pl for k in ["url","redirect","next","return","target","src","dest","callback","redir"]):
+                    if "ssrf" in allowed:
+                        hypotheses.append({"url": url, "param": param, "method": method,
+                            "category": "ssrf", "confidence": 0.75,
+                            "reasoning": f"Param '{param}' may trigger server-side fetch"})
+                    if "open_redirect" in allowed:
+                        hypotheses.append({"url": url, "param": param, "method": method,
+                            "category": "open_redirect", "confidence": 0.75,
+                            "reasoning": f"Param '{param}' may redirect to arbitrary URL"})
+                # ID params → IDOR
+                if any(k in pl for k in ["id","user","uid","account","order","item","record"]):
+                    if "idor" in allowed:
+                        hypotheses.append({"url": url, "param": param, "method": method,
+                            "category": "idor", "confidence": 0.65,
+                            "reasoning": f"Param '{param}' may expose other users' data via ID change"})
+                # Command-like params → CMDi (aggressive)
+                if any(k in pl for k in ["cmd","exec","command","ping","host","ip","query","run"]):
+                    if "cmdi" in allowed:
+                        hypotheses.append({"url": url, "param": param, "method": method,
+                            "category": "cmdi", "confidence": 0.7,
+                            "reasoning": f"Param '{param}' may be passed to OS command"})
 
-        state["hypotheses"] = hypotheses
-        state = self._reason(state, f"Generated {len(hypotheses)} hypotheses")
+            # Per-endpoint checks (no param needed)
+            # CSRF — any form endpoint
+            if source == "form" and method == "POST" and "csrf" in allowed:
+                hypotheses.append({"url": url, "param": "", "method": method,
+                    "category": "csrf", "confidence": 0.7,
+                    "reasoning": "POST form — check for missing CSRF token"})
+            # CORS
+            if "cors" in allowed:
+                hypotheses.append({"url": url, "param": "", "method": "GET",
+                    "category": "cors", "confidence": 0.6,
+                    "reasoning": "Check CORS headers for wildcard or reflection"})
+            # GraphQL
+            if "graphql" in lower_url and "graphql" in allowed:
+                hypotheses.append({"url": url, "param": "", "method": "POST",
+                    "category": "graphql", "confidence": 0.85,
+                    "reasoning": "GraphQL endpoint — check introspection + batching"})
+            # JWT
+            if any(k in lower_url for k in ["auth","login","token","jwt"]) and "jwt" in allowed:
+                hypotheses.append({"url": url, "param": "", "method": method,
+                    "category": "jwt", "confidence": 0.6,
+                    "reasoning": "Auth endpoint — check JWT algorithm confusion"})
+            # Sensitive file exposure
+            if any(url.endswith(p) for p in ["/.env","/.git/config","/backup.zip","/phpinfo.php"]):
+                hypotheses.append({"url": url, "param": "", "method": "GET",
+                    "category": "misconfig", "confidence": 0.9,
+                    "reasoning": "Sensitive file path detected"})
+
+        # Deduplicate
+        seen = set()
+        deduped = []
+        for h in hypotheses:
+            key = (h["url"], h["param"], h["category"])
+            if key not in seen:
+                seen.add(key)
+                deduped.append(h)
+
+        state["hypotheses"] = deduped
+        state = self._reason(state, f"Generated {len(deduped)} hypotheses across {len(set(h['category'] for h in deduped))} vuln categories")
         return state
 
 

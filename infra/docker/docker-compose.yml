@@ -30,6 +30,7 @@ services:
       - ../../db/schemas/postgres/001_initial_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql
       - ../../db/schemas/postgres/002_vuln_engine_schema.sql:/docker-entrypoint-initdb.d/002_vuln_engine.sql
       - ../../db/schemas/postgres/003_triage_engine_schema.sql:/docker-entrypoint-initdb.d/003_triage_engine.sql
+      - ../../db/schemas/postgres/004_bug_bounty_platform.sql:/docker-entrypoint-initdb.d/004_bug_bounty.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U reconx"]
       interval: 10s
