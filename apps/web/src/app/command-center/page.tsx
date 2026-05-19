@@ -175,7 +175,8 @@ export default function CommandCenterPage() {
           max_cycles: cycles,
           mode: scanMode,
           program_id: selectedProgram || null,
-          policy: prog ? { allowed_tests: prog.allowed_tests, rate_limit_rps: prog.rate_limit_rps } : null
+          policy: prog ? { allowed_tests: prog.allowed_tests, rate_limit_rps: prog.rate_limit_rps } : null,
+          custom_headers: prog?.custom_headers || null,
         })
       });
       if (res.ok) {

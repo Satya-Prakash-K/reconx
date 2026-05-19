@@ -64,6 +64,8 @@ export default function ProgramsPage() {
   const [allowed, setAllowed] = useState<string[]>(PRESETS.standard);
   const [rateLimit, setRateLimit] = useState(2);
   const [notes, setNotes] = useState("");
+  const [customHeaderKey, setCustomHeaderKey] = useState("");
+  const [customHeaderVal, setCustomHeaderVal] = useState("");
   const [preset, setPreset] = useState("standard");
 
   useEffect(() => {
@@ -100,7 +102,9 @@ export default function ProgramsPage() {
   const handleSave = async () => {
     if (!name.trim()) return;
     setSaving(true);
-    const body = { name, platform, in_scope: inScope, out_of_scope: outScope, allowed_tests: allowed, rate_limit_rps: rateLimit, notes };
+    const customHeaders = customHeaderKey.trim() && customHeaderVal.trim()
+      ? { [customHeaderKey.trim()]: customHeaderVal.trim() } : undefined;
+    const body = { name, platform, in_scope: inScope, out_of_scope: outScope, allowed_tests: allowed, rate_limit_rps: rateLimit, custom_headers: customHeaders, notes };
     try {
       const res = await fetch(`${ENGINE}/programs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (res.ok) {
@@ -108,7 +112,9 @@ export default function ProgramsPage() {
         setPrograms(prev => [p, ...prev]);
         setShowForm(false); setSaved(true);
         setTimeout(() => setSaved(false), 2000);
-        setName(""); setScopeText(""); setInScope([]); setOutScope([]); setAllowed(PRESETS.standard); setNotes("");
+        setName(""); setScopeText(""); setInScope([]); setOutScope([]);
+        setAllowed(PRESETS.standard); setNotes("");
+        setCustomHeaderKey(""); setCustomHeaderVal("");
       }
     } catch {}
     setSaving(false);
@@ -270,6 +276,17 @@ export default function ProgramsPage() {
               <label style={lbl}>Max Requests / Second: <strong style={{ color: "#a5b4fc" }}>{rateLimit}</strong></label>
               <input type="range" min={1} max={10} value={rateLimit} onChange={e => setRateLimit(+e.target.value)}
                 style={{ width: "100%", marginBottom: "1.2rem", accentColor: "#6366f1" }} />
+
+              {/* Custom headers (e.g. X-Bug-Bounty) */}
+              <label style={lbl}>Program HTTP Header (optional) — sent with every request</label>
+              <div style={{ display: "flex", gap: 8, marginBottom: "1.2rem" }}>
+                <input value={customHeaderKey} onChange={e => setCustomHeaderKey(e.target.value)}
+                  placeholder="Header name, e.g. X-Bug-Bounty"
+                  style={{ ...inp, marginBottom: 0, flex: 1 }} />
+                <input value={customHeaderVal} onChange={e => setCustomHeaderVal(e.target.value)}
+                  placeholder="Value, e.g. your_bugcrowd_username"
+                  style={{ ...inp, marginBottom: 0, flex: 2 }} />
+              </div>
 
               {/* Step 6: Notes */}
               <label style={lbl}>Policy Notes (optional)</label>

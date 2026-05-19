@@ -25,6 +25,9 @@ class SessionRequest(BaseModel):
     targets: list[str]
     max_cycles: int = 3
     mode: str = "autonomous"
+    program_id: str | None = None
+    policy: dict | None = None       # allowed_tests, rate_limit_rps
+    custom_headers: dict | None = None  # e.g. {"X-Bug-Bounty": "username"}
 
 
 # ── Broadcast helper ────────────────────────────────────────────────────────
@@ -45,7 +48,8 @@ async def _broadcast(session_id: str, state: dict[str, Any]) -> None:
 # ── Background scan with streaming ─────────────────────────────────────────
 
 async def _run_scan(workspace_id: str, session_id: str, targets: list[str],
-                    max_cycles: int, policy: dict | None = None) -> None:
+                    max_cycles: int, policy: dict | None = None,
+                    custom_headers: dict | None = None) -> None:
     """Run the swarm and broadcast progress directly to connected WebSockets."""
     try:
         _logger.info("Scan task started", session_id=session_id, targets=targets)
@@ -56,7 +60,8 @@ async def _run_scan(workspace_id: str, session_id: str, targets: list[str],
         )
 
         state = create_initial_state(workspace_id, session_id, targets, max_cycles)
-        state["policy"] = policy or {}  # Pass program policy into swarm state
+        state["policy"] = policy or {}          # program policy into swarm state
+        state["custom_headers"] = custom_headers or {}  # e.g. X-Bug-Bounty header
 
         agents_in_order = [
             ("planning",   PlannerAgent()),
@@ -104,9 +109,11 @@ async def _run_scan(workspace_id: str, session_id: str, targets: list[str],
 
             import httpx, urllib.parse, time as _time
 
+            # Merge base headers with any program-specific custom headers (e.g. X-Bug-Bounty)
             HEADERS = {
                 "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
                 "Accept": "text/html,application/xhtml+xml,*/*",
+                **(state.get("custom_headers") or {}),
             }
             SQLI_ERRORS = [
                 "you have an error in your sql syntax","warning: mysql","unclosed quotation mark",
@@ -495,7 +502,8 @@ async def start_session(request: SessionRequest):
     _ws_clients[session_id] = []
     asyncio.create_task(_run_scan(
         request.workspace_id, session_id, request.targets,
-        request.max_cycles, request.policy or {}
+        request.max_cycles, request.policy or {},
+        request.custom_headers or {}
     ))
     return {"session_id": session_id, "phase": "initializing"}
 
@@ -543,6 +551,7 @@ class ProgramCreate(BaseModel):
         "open_redirect","ssti","misconfig","graphql","jwt"
     ]
     rate_limit_rps: int = 2
+    custom_headers: dict | None = None  # e.g. {"X-Bug-Bounty": "myusername"}
     notes: str | None = None
 
 
@@ -572,7 +581,9 @@ async def create_program(req: ProgramCreate):
         "platform_url": req.platform_url, "description": req.description,
         "in_scope": req.in_scope, "out_of_scope": req.out_of_scope,
         "allowed_tests": req.allowed_tests,
-        "rate_limit_rps": req.rate_limit_rps, "notes": req.notes,
+        "rate_limit_rps": req.rate_limit_rps,
+        "custom_headers": req.custom_headers or {},
+        "notes": req.notes,
         "finding_count": 0, "scan_count": 0,
     }
     _programs.append(entry)
