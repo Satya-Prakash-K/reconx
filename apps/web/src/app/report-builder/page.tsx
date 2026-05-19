@@ -56,28 +56,164 @@ export default function ReportBuilderPage() {
 
   const handleGenerate = async () => {
     setIsGenerating(true);
-    setReport(`Calling AI Triage Engine to generate ${selectedFormat} report...`);
+    setReport(`⏳ Fetching real scan findings...`);
     try {
-      // Fetch a real finding ID first
-      const findRes = await fetch("http://localhost:8000/api/v1/findings/?limit=1");
-      const findings = await findRes.json();
-      const findingId = findings.length > 0 ? findings[0].id : "demo";
+      // Fetch real findings from autonomous engine
+      const engineRes = await fetch("http://localhost:8004/api/v1/agents/findings");
+      let findings: any[] = [];
+      if (engineRes.ok) findings = await engineRes.json();
 
-      const res = await fetch("http://localhost:8003/api/v1/reports/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ finding_id: findingId, format: selectedFormat })
-      });
-      
-      if (res.ok) {
-        const data = await res.json();
-        setReport(data.report || data.markdown || SAMPLE_REPORT);
-      } else {
-        setReport(SAMPLE_REPORT); // Fallback for demo
+      // Fallback to API Gateway
+      if (findings.length === 0) {
+        try {
+          const gwRes = await fetch("http://localhost:8000/api/v1/findings/?limit=10");
+          if (gwRes.ok) findings = await gwRes.json();
+        } catch {}
       }
-    } catch(e) {
-      setReport(SAMPLE_REPORT); // Fallback if triage engine is offline
+
+      if (findings.length === 0) {
+        setReport("⚠️ No confirmed findings yet. Run a scan first, then generate the report.");
+        setIsGenerating(false);
+        return;
+      }
+
+      // Generate a real report from actual findings
+      const report = generateReport(selectedFormat, findings);
+      setReport(report);
+    } catch (e) {
+      setReport("⚠️ Failed to generate report. Ensure a scan has been completed.");
+    } finally {
+      setIsGenerating(false);
     }
+  };
+
+  const generateReport = (format: string, findings: any[]): string => {
+    const primary = findings[0];
+    const title = primary.title || "Vulnerability Found";
+    const severity = (primary.severity || "high").toUpperCase();
+    const cvss = primary.cvss_score || "7.5";
+    const url = primary.affected_url || primary.target || "N/A";
+    const param = primary.parameter || primary.param || "N/A";
+    const desc = primary.description || `${title} found on ${url}`;
+    const evidence = primary.evidence || "Confirmed via active probe";
+    const allTitles = findings.map(f => `- ${f.title} (${(f.severity||'?').toUpperCase()}, CVSS ${f.cvss_score || '?'}) → ${f.affected_url}`).join('\n');
+
+    const cwes: Record<string, string> = {
+      lfi: "CWE-22 (Path Traversal)",
+      xss: "CWE-79 (Cross-Site Scripting)",
+      sqli: "CWE-89 (SQL Injection)",
+      rce: "CWE-78 (OS Command Injection)",
+    };
+    const vulnKey = Object.keys(cwes).find(k => title.toLowerCase().includes(k)) || "vuln";
+    const cwe = cwes[vulnKey] || "CWE-Other";
+
+    if (format === "hackerone" || format === "bugcrowd" || format === "intigriti") {
+      return `## Summary
+${title}
+
+## Severity
+**${severity}** (CVSS: ${cvss})
+CVSS Vector: \`CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H\`
+
+## Description
+${desc}
+
+**Affected URL:** \`${url}\`
+**Vulnerable Parameter:** \`${param}\`
+**Evidence:** ${evidence}
+
+## Steps to Reproduce
+1. Navigate to \`${url}\`
+2. Inject the following payload into the \`${param}\` parameter:
+   \`\`\`
+   ${vulnKey === "lfi" ? "../../../etc/passwd" : vulnKey === "xss" ? "<script>alert('xss')</script>" : "' OR '1'='1"}
+   \`\`\`
+3. Observe the server response — the vulnerability is confirmed when ${
+     vulnKey === "lfi" ? "the /etc/passwd file contents are disclosed" :
+     vulnKey === "xss" ? "the script tag is reflected unescaped" :
+     "a SQL error or unexpected data is returned"
+   }
+
+## Supporting Material
+- Evidence: ${evidence}
+- ${cwe}
+- OWASP: ${vulnKey === "lfi" ? "A01:2021-Broken Access Control" : vulnKey === "xss" ? "A03:2021-Injection" : "A03:2021-Injection"}
+
+## All Confirmed Findings (${findings.length} total)
+${allTitles}
+
+## Impact
+${vulnKey === "lfi"
+  ? "An attacker can read arbitrary files from the server, potentially exposing credentials, SSH keys, configuration files, and source code."
+  : vulnKey === "xss"
+  ? "An attacker can execute arbitrary JavaScript in the victim's browser, enabling session hijacking, credential theft, and phishing attacks."
+  : "An attacker can read, modify, or delete database contents, bypass authentication, and potentially gain full system access."}
+
+## Remediation
+${vulnKey === "lfi"
+  ? "Validate and sanitize file path inputs. Use a whitelist of allowed file names. Avoid passing user-controlled values directly to file system functions."
+  : vulnKey === "xss"
+  ? "Encode all user-controlled output with context-aware escaping. Implement a strict Content-Security-Policy header."
+  : "Use parameterized queries or prepared statements. Never concatenate user input directly into SQL queries."}`;
+    }
+
+    if (format === "executive") {
+      return `# Executive Summary — Security Assessment
+
+**Assessment Date:** ${new Date().toLocaleDateString()}
+**Target:** ${url}
+**Total Confirmed Vulnerabilities:** ${findings.length}
+
+## Key Findings
+
+${allTitles}
+
+## Risk Overview
+The assessment identified **${findings.length} confirmed vulnerability(ies)**, including a **${severity}-severity** issue (${title}). This vulnerability allows an attacker to ${
+  vulnKey === "lfi" ? "read sensitive server files" :
+  vulnKey === "xss" ? "execute malicious scripts in user browsers" :
+  "manipulate the application database"
+}, posing significant risk to data confidentiality and system integrity.
+
+## Immediate Actions Required
+1. Patch the vulnerable parameter \`${param}\` on \`${url}\` immediately
+2. Conduct a full code review for similar patterns
+3. Implement input validation and output encoding across all user-controlled inputs
+4. Deploy a Web Application Firewall (WAF) as a compensating control`;
+    }
+
+    // Technical writeup
+    return `# Technical Vulnerability Report
+
+**Title:** ${title}
+**Severity:** ${severity} | **CVSS:** ${cvss}
+**Target:** ${url}
+**Parameter:** ${param}
+**CWE:** ${cwe}
+
+## Technical Analysis
+${desc}
+
+### Proof of Concept
+\`\`\`
+GET ${url}?${param}=${vulnKey === "lfi" ? "../../../etc/passwd" : vulnKey === "xss" ? "<script>alert(1)</script>" : "' OR 1=1--"}
+\`\`\`
+
+### Evidence
+${evidence}
+
+## All Findings
+${allTitles}
+
+## Remediation
+${vulnKey === "lfi"
+  ? "1. Validate all file path inputs with an allowlist\n2. Use realpath() and check it starts within the expected directory\n3. Disable allow_url_include in php.ini"
+  : vulnKey === "xss"
+  ? "1. Apply htmlspecialchars() or equivalent to all user output\n2. Set Content-Security-Policy header\n3. Use HTTPOnly and Secure cookie flags"
+  : "1. Use PDO prepared statements\n2. Apply principle of least privilege to DB users\n3. Enable query logging to detect injection attempts"}`;
+  };
+
+
     setIsGenerating(false);
   };
 

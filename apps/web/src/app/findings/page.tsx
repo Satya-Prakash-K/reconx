@@ -65,11 +65,34 @@ export default function FindingsPage() {
   useEffect(() => {
     const fetchFindings = async () => {
       try {
-        let url = "http://localhost:8000/api/v1/findings/";
-        if (search.length >= 2) {
-          url = `http://localhost:8000/api/v1/findings/search?q=${encodeURIComponent(search)}`;
+        // Primary: fetch from autonomous engine (real-time findings)
+        const engineRes = await fetch("http://localhost:8004/api/v1/agents/findings");
+        if (engineRes.ok) {
+          const data: any[] = await engineRes.json();
+          if (data.length > 0) {
+            setFindings(data.map((f, i) => ({
+              id: f.id || String(i),
+              title: f.title,
+              severity: (f.severity || "high").toLowerCase() as Finding["severity"],
+              category: f.category || (f.title?.toLowerCase().includes("lfi") ? "lfi" :
+                         f.title?.toLowerCase().includes("xss") ? "xss" :
+                         f.title?.toLowerCase().includes("sql") ? "sqli" : "vuln"),
+              affected_url: f.affected_url || f.target || "",
+              param: f.parameter || f.param || "",
+              confidence: f.confidence ?? 0.95,
+              status: f.status || "confirmed",
+              source_tool: f.source_tool || "ReconX Autonomous Engine",
+              description: f.description || `${f.title} confirmed on ${f.affected_url}`,
+            })));
+            return;
+          }
         }
-        
+      } catch {}
+
+      // Fallback: try API Gateway
+      try {
+        let url = "http://localhost:8000/api/v1/findings/";
+        if (search.length >= 2) url = `http://localhost:8000/api/v1/findings/search?q=${encodeURIComponent(search)}`;
         const res = await fetch(url);
         if (res.ok) {
           const data = await res.json();
@@ -78,7 +101,7 @@ export default function FindingsPage() {
             title: f.title,
             severity: f.severity,
             category: f.finding_type || "vuln",
-            affected_url: "Target Asset",
+            affected_url: f.affected_url || "Target Asset",
             confidence: f.confidence || 0.8,
             status: f.status,
             source_tool: f.source_tool || "ReconX Engine",
@@ -89,10 +112,11 @@ export default function FindingsPage() {
         console.error("Failed to fetch findings", e);
       }
     };
-    
+
     const timer = setTimeout(fetchFindings, search ? 300 : 0);
     return () => clearTimeout(timer);
   }, [search]);
+
 
   const updateStatus = async (id: string, newStatus: string) => {
     try {

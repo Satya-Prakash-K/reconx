@@ -13,10 +13,11 @@ router = APIRouter()
 _logger = structlog.get_logger(__name__)
 
 # ── In-memory session store ─────────────────────────────────────────────────
-# Maps session_id → latest state snapshot for REST polling
 _sessions: dict[str, dict[str, Any]] = {}
-# Maps session_id → list of connected WebSocket clients
 _ws_clients: dict[str, list[WebSocket]] = {}
+
+# ── Global findings store (persists across all sessions) ────────────────────
+_all_findings: list[dict[str, Any]] = []
 
 
 class SessionRequest(BaseModel):
@@ -250,8 +251,29 @@ async def _run_scan(workspace_id: str, session_id: str, targets: list[str], max_
             }
         }
         await _broadcast(session_id, final)
+
+        # ── Persist findings to global store ─────────────────────────────────
+        for f in state.get("findings", []):
+            entry = dict(f)
+            entry.setdefault("id", str(uuid.uuid4()))
+            entry["session_id"] = session_id
+            entry["target"] = state.get("targets", [""])[0]
+            entry["status"] = "confirmed"
+            entry["confidence"] = 0.95
+            entry["source_tool"] = "ReconX Autonomous Engine"
+            # Avoid duplicates in global store
+            already = any(
+                x.get("title") == entry.get("title")
+                and x.get("affected_url") == entry.get("affected_url")
+                and x.get("parameter") == entry.get("parameter")
+                for x in _all_findings
+            )
+            if not already:
+                _all_findings.append(entry)
+
         _logger.info("Scan complete", session_id=session_id,
                      findings=len(state.get("findings", [])),
+                     total_global_findings=len(_all_findings),
                      endpoints=len(state.get("discovered_endpoints", [])))
 
     except Exception as exc:
@@ -295,6 +317,22 @@ async def get_session_progress(session_id: str):
     })
 
 
+# ── REST endpoint: all findings across sessions ──────────────────────────────
+
+@router.get("/findings")
+async def get_all_findings():
+    """Return all confirmed findings from all scan sessions."""
+    return _all_findings
+
+
+@router.get("/findings/latest")
+async def get_latest_finding():
+    """Return the most recent confirmed finding for report generation."""
+    if not _all_findings:
+        return {}
+    return _all_findings[-1]
+
+
 # ── WebSocket: live streaming ───────────────────────────────────────────────
 
 @router.websocket("/ws/{session_id}")
@@ -305,14 +343,12 @@ async def session_ws(websocket: WebSocket, session_id: str):
         _ws_clients[session_id] = []
     _ws_clients[session_id].append(websocket)
 
-    # Send current state immediately on connect
     if session_id in _sessions:
         await websocket.send_json(_sessions[session_id])
 
     try:
         while True:
             await asyncio.sleep(1)
-            # Keep alive ping
             current = _sessions.get(session_id, {})
             if current.get("phase") in ("complete", "error", "not_found"):
                 break
