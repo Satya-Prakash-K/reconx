@@ -55,11 +55,18 @@ export default function CommandCenterPage() {
   const [cycles, setCycles] = useState(3);
   const [isScanning, setIsScanning] = useState(false);
   const [scanId, setScanId] = useState<string | null>(null);
+  const [programs, setPrograms] = useState<any[]>([]);
+  const [selectedProgram, setSelectedProgram] = useState<string>("");
   const [reasoningChain, setReasoningChain] = useState<string[]>([
     "[system] Awaiting target configuration...",
     "[system] Ready to launch agent swarm."
   ]);
   const [stats, setStats] = useState({ hypotheses: 0, findings: 0, endpoints: 0 });
+
+  useEffect(() => {
+    fetch("http://localhost:8004/api/v1/agents/programs").then(r => r.json()).then(setPrograms).catch(() => {});
+  }, []);
+
 
   useEffect(() => {
     let timer: NodeJS.Timeout;
@@ -158,10 +165,18 @@ export default function CommandCenterPage() {
     setReasoningChain(["[system] Initializing agent swarm..."]);
 
     try {
+      const prog = programs.find(p => p.id === selectedProgram);
       const res = await fetch("http://localhost:8004/api/v1/agents/session/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workspace_id: "default", targets: [targetUrl], max_cycles: cycles, mode: scanMode })
+        body: JSON.stringify({
+          workspace_id: "default",
+          targets: [targetUrl],
+          max_cycles: cycles,
+          mode: scanMode,
+          program_id: selectedProgram || null,
+          policy: prog ? { allowed_tests: prog.allowed_tests, rate_limit_rps: prog.rate_limit_rps } : null
+        })
       });
       if (res.ok) {
         const data = await res.json();
@@ -236,17 +251,34 @@ export default function CommandCenterPage() {
                 <option value="vuln">Vuln Testing Only</option>
               </select>
             </div>
-            
+
+            {programs.length > 0 && (
+              <div className="w-full md:w-52">
+                <label className="block text-xs text-muted-foreground mb-1">Bug Bounty Program</label>
+                <select
+                  value={selectedProgram}
+                  onChange={e => setSelectedProgram(e.target.value)}
+                  className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-purple-500/50 appearance-none"
+                >
+                  <option value="">— No program (unrestricted) —</option>
+                  {programs.map((p: any) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div className="w-full md:w-32">
               <label className="block text-xs text-muted-foreground mb-1">Max Cycles</label>
-              <input 
-                type="number" 
+              <input
+                type="number"
                 min="1" max="10"
                 value={cycles}
                 onChange={e => setCycles(parseInt(e.target.value))}
                 className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-purple-500/50"
               />
             </div>
+
             
             <button 
               type="submit" 
