@@ -93,49 +93,124 @@ async def _run_scan(workspace_id: str, session_id: str, targets: list[str], max_
                 await _broadcast(session_id, _snap(phase, round((step / total_steps) * 100, 1)))
                 await asyncio.sleep(0.2)
 
-            # ── Testing phase: real HTTP XSS checks ─────────────────────────
+            # ── Testing phase: multi-vuln active probes ─────────────────────
             step += 1
             await _broadcast(session_id, _snap("testing", round((step / total_steps) * 100, 1)))
             state["phase"] = "testing"
             state["reasoning_chain"].append("[tester] Starting active vulnerability tests")
 
             import httpx, urllib.parse
-            headers = {"User-Agent": "Mozilla/5.0 ReconX/2.0"}
-            async with httpx.AsyncClient(verify=False, timeout=5.0, follow_redirects=True, headers=headers) as client:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,*/*",
+            }
+
+            SQLI_ERRORS = [
+                "you have an error in your sql syntax",
+                "warning: mysql", "unclosed quotation mark",
+                "quoted string not properly terminated",
+                "syntax error", "odbc microsoft access driver",
+                "ora-", "pg_query", "sqlite_",
+            ]
+
+            async def probe(client, url, param, payload):
+                """Send a GET probe with the given payload for a param."""
+                test_url = f"{url}?{urllib.parse.quote(param)}={urllib.parse.quote(payload)}"
+                resp = await client.get(test_url)
+                return resp, test_url
+
+            async with httpx.AsyncClient(verify=False, timeout=8.0, follow_redirects=True, headers=headers) as client:
                 for h in state.get("hypotheses", []):
                     url = h.get("url", "")
                     param = h.get("param", "")
                     cat = h.get("category", "")
                     if not url or not param:
                         continue
-                    if cat == "xss":
-                        payload = "<script>alert('reconx')</script>"
-                        test_url = f"{url}?{urllib.parse.quote(param)}={urllib.parse.quote(payload)}"
-                        state["reasoning_chain"].append(f"[tester] XSS probe → {url}?{param}=...")
-                        await _broadcast(session_id, _snap("testing", round((step / total_steps) * 100, 1)))
-                        try:
-                            resp = await client.get(test_url)
+
+                    await _broadcast(session_id, _snap("testing", round((step / total_steps) * 100, 1)))
+
+                    try:
+                        # ── XSS ─────────────────────────────────────────────
+                        if cat == "xss":
+                            payload = "<script>alert('reconx')</script>"
+                            state["reasoning_chain"].append(f"[tester] XSS probe → {url}?{param}=<script>")
+                            resp, test_url = await probe(client, url, param, payload)
                             if payload in resp.text:
-                                state["reasoning_chain"].append(f"[tester] ✅ CONFIRMED XSS on {url} param={param}")
+                                state["reasoning_chain"].append(f"[tester] ✅ CONFIRMED Reflected XSS on {url} param={param}")
                                 state["findings"].append({
-                                    "title": "Reflected XSS",
-                                    "affected_url": url,
-                                    "severity": "High",
-                                    "cvss_score": 7.1,
-                                    "exploitability_score": 8.0,
-                                    "impact_score": 6.0,
+                                    "title": "Reflected Cross-Site Scripting (XSS)",
+                                    "affected_url": url, "parameter": param,
+                                    "severity": "High", "cvss_score": 7.1,
+                                    "exploitability_score": 8.0, "impact_score": 6.0,
                                     "description": f"Parameter '{param}' reflects unsanitized input.",
+                                    "evidence": f"Payload reflected in response body",
                                 })
                                 h["confirmed"] = True
                             else:
-                                state["reasoning_chain"].append(f"[tester] ❌ XSS not reflected on {url}")
-                        except Exception as ex:
-                            state["reasoning_chain"].append(f"[tester] Probe failed: {type(ex).__name__}")
-                    await asyncio.sleep(0.1)
+                                state["reasoning_chain"].append(f"[tester] ❌ XSS not reflected on {url}?{param}")
+
+                        # ── SQLi error-based ─────────────────────────────────
+                        elif cat == "sqli":
+                            payload = "'"
+                            state["reasoning_chain"].append(f"[tester] SQLi probe → {url}?{param}='")
+                            resp, test_url = await probe(client, url, param, payload)
+                            body_lower = resp.text.lower()
+                            matched = next((e for e in SQLI_ERRORS if e in body_lower), None)
+                            if matched:
+                                state["reasoning_chain"].append(f"[tester] ✅ CONFIRMED SQLi on {url} param={param} — error: {matched}")
+                                state["findings"].append({
+                                    "title": "SQL Injection",
+                                    "affected_url": url, "parameter": param,
+                                    "severity": "Critical", "cvss_score": 9.8,
+                                    "exploitability_score": 9.0, "impact_score": 9.0,
+                                    "description": f"Parameter '{param}' is injectable — SQL error detected: '{matched}'",
+                                    "evidence": matched,
+                                })
+                                h["confirmed"] = True
+                            else:
+                                # Try boolean-based: original vs modified response size check
+                                resp_true, _ = await probe(client, url, param, "1 OR 1=1")
+                                resp_false, _ = await probe(client, url, param, "1 AND 1=2")
+                                if abs(len(resp_true.text) - len(resp_false.text)) > 50:
+                                    state["reasoning_chain"].append(f"[tester] ✅ CONFIRMED Blind SQLi on {url} param={param} (boolean-based)")
+                                    state["findings"].append({
+                                        "title": "Blind SQL Injection (Boolean-Based)",
+                                        "affected_url": url, "parameter": param,
+                                        "severity": "Critical", "cvss_score": 9.1,
+                                        "exploitability_score": 8.5, "impact_score": 9.0,
+                                        "description": f"Parameter '{param}' shows different responses for TRUE/FALSE conditions.",
+                                        "evidence": f"Response size diff: {abs(len(resp_true.text) - len(resp_false.text))} bytes",
+                                    })
+                                    h["confirmed"] = True
+                                else:
+                                    state["reasoning_chain"].append(f"[tester] ❌ No SQLi detected on {url}?{param}")
+
+                        # ── LFI / Path Traversal ─────────────────────────────
+                        if "page" in param.lower() or "file" in param.lower() or "path" in param.lower() or "include" in param.lower():
+                            lfi_payload = "../../../etc/passwd"
+                            state["reasoning_chain"].append(f"[tester] LFI probe → {url}?{param}=../../../etc/passwd")
+                            resp, _ = await probe(client, url, param, lfi_payload)
+                            if "root:" in resp.text or "bin/bash" in resp.text or "etc/passwd" in resp.text:
+                                state["reasoning_chain"].append(f"[tester] ✅ CONFIRMED LFI on {url} param={param}")
+                                state["findings"].append({
+                                    "title": "Local File Inclusion (LFI)",
+                                    "affected_url": url, "parameter": param,
+                                    "severity": "Critical", "cvss_score": 9.3,
+                                    "exploitability_score": 9.0, "impact_score": 9.5,
+                                    "description": f"Parameter '{param}' includes local files — /etc/passwd disclosed.",
+                                    "evidence": "root: found in response",
+                                })
+                            else:
+                                state["reasoning_chain"].append(f"[tester] ❌ LFI not confirmed on {url}?{param}")
+
+                    except Exception as ex:
+                        state["reasoning_chain"].append(f"[tester] Probe error on {url}?{param}: {type(ex).__name__}")
+                    await asyncio.sleep(0.15)
 
             state["reasoning_chain"].append(f"[tester] Testing complete — {len(state.get('findings', []))} findings confirmed")
             await _broadcast(session_id, _snap("testing", round((step / total_steps) * 100, 1)))
             await asyncio.sleep(0.2)
+
 
             # ── Triage + Memory ─────────────────────────────────────────────
             for phase, agent in post_agents:
