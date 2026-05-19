@@ -39,12 +39,12 @@ CREATE TABLE IF NOT EXISTS triaged_findings (
     updated_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_triaged_workspace ON triaged_findings(workspace_id);
-CREATE INDEX idx_triaged_severity ON triaged_findings(severity);
-CREATE INDEX idx_triaged_category ON triaged_findings(category);
-CREATE INDEX idx_triaged_priority ON triaged_findings(priority_rank);
-CREATE INDEX idx_triaged_cvss ON triaged_findings(cvss_score DESC);
-CREATE INDEX idx_triaged_duplicate ON triaged_findings(is_duplicate);
+CREATE INDEX IF NOT EXISTS idx_triaged_workspace ON triaged_findings(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_triaged_severity ON triaged_findings(severity);
+CREATE INDEX IF NOT EXISTS idx_triaged_category ON triaged_findings(category);
+CREATE INDEX IF NOT EXISTS idx_triaged_priority ON triaged_findings(priority_rank);
+CREATE INDEX IF NOT EXISTS idx_triaged_cvss ON triaged_findings(cvss_score DESC);
+CREATE INDEX IF NOT EXISTS idx_triaged_duplicate ON triaged_findings(is_duplicate);
 
 -- ── Generated Reports ──────────────────────
 CREATE TABLE IF NOT EXISTS generated_reports (
@@ -63,9 +63,9 @@ CREATE TABLE IF NOT EXISTS generated_reports (
     updated_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_reports_workspace ON generated_reports(workspace_id);
-CREATE INDEX idx_reports_format ON generated_reports(format);
-CREATE INDEX idx_reports_finding ON generated_reports(finding_id);
+CREATE INDEX IF NOT EXISTS idx_reports_workspace ON generated_reports(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_reports_format ON generated_reports(format);
+CREATE INDEX IF NOT EXISTS idx_reports_finding ON generated_reports(finding_id);
 
 -- ── Exploit Intelligence ───────────────────
 CREATE TABLE IF NOT EXISTS exploit_intelligence (
@@ -82,8 +82,8 @@ CREATE TABLE IF NOT EXISTS exploit_intelligence (
     created_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_exploit_intel_category ON exploit_intelligence(category);
-CREATE INDEX idx_exploit_intel_effectiveness ON exploit_intelligence(effectiveness DESC);
+CREATE INDEX IF NOT EXISTS idx_exploit_intel_category ON exploit_intelligence(category);
+CREATE INDEX IF NOT EXISTS idx_exploit_intel_effectiveness ON exploit_intelligence(effectiveness DESC);
 
 -- ── Audit Trail ────────────────────────────
 CREATE TABLE IF NOT EXISTS audit_trail (
@@ -99,9 +99,9 @@ CREATE TABLE IF NOT EXISTS audit_trail (
     created_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_audit_workspace ON audit_trail(workspace_id);
-CREATE INDEX idx_audit_action ON audit_trail(action);
-CREATE INDEX idx_audit_created ON audit_trail(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_trail_workspace ON audit_trail(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_trail_action ON audit_trail(action);
+CREATE INDEX IF NOT EXISTS idx_trail_created ON audit_trail(created_at DESC);
 
 -- ── Trigger: auto-update ───────────────────
 CREATE TRIGGER trg_triaged_updated

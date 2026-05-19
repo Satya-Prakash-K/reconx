@@ -31,8 +31,8 @@ CREATE TABLE IF NOT EXISTS vuln_scans (
     updated_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_vuln_scans_workspace ON vuln_scans(workspace_id);
-CREATE INDEX idx_vuln_scans_status ON vuln_scans(status);
+CREATE INDEX IF NOT EXISTS idx_vuln_scans_workspace ON vuln_scans(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_vuln_scans_status ON vuln_scans(status);
 
 -- ── Vulnerability Findings ─────────────────
 CREATE TABLE IF NOT EXISTS vuln_findings (
@@ -62,12 +62,12 @@ CREATE TABLE IF NOT EXISTS vuln_findings (
     updated_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_vuln_findings_scan ON vuln_findings(scan_id);
-CREATE INDEX idx_vuln_findings_workspace ON vuln_findings(workspace_id);
-CREATE INDEX idx_vuln_findings_severity ON vuln_findings(severity);
-CREATE INDEX idx_vuln_findings_category ON vuln_findings(category);
-CREATE INDEX idx_vuln_findings_status ON vuln_findings(status);
-CREATE INDEX idx_vuln_findings_confidence ON vuln_findings(confidence DESC);
+CREATE INDEX IF NOT EXISTS idx_vuln_findings_scan ON vuln_findings(scan_id);
+CREATE INDEX IF NOT EXISTS idx_vuln_findings_workspace ON vuln_findings(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_vuln_findings_severity ON vuln_findings(severity);
+CREATE INDEX IF NOT EXISTS idx_vuln_findings_category ON vuln_findings(category);
+CREATE INDEX IF NOT EXISTS idx_vuln_findings_status ON vuln_findings(status);
+CREATE INDEX IF NOT EXISTS idx_vuln_findings_confidence ON vuln_findings(confidence DESC);
 
 -- ── Endpoints (attack surface) ─────────────
 CREATE TABLE IF NOT EXISTS endpoints (
@@ -89,9 +89,9 @@ CREATE TABLE IF NOT EXISTS endpoints (
     UNIQUE(workspace_id, url, method)
 );
 
-CREATE INDEX idx_endpoints_workspace ON endpoints(workspace_id);
-CREATE INDEX idx_endpoints_priority ON endpoints(priority_score DESC);
-CREATE INDEX idx_endpoints_category ON endpoints(category);
+CREATE INDEX IF NOT EXISTS idx_endpoints_workspace ON endpoints(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_endpoints_priority ON endpoints(priority_score DESC);
+CREATE INDEX IF NOT EXISTS idx_endpoints_category ON endpoints(category);
 
 -- ── AI Hypotheses ──────────────────────────
 CREATE TABLE IF NOT EXISTS vuln_hypotheses (
@@ -110,8 +110,8 @@ CREATE TABLE IF NOT EXISTS vuln_hypotheses (
     created_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_hypotheses_workspace ON vuln_hypotheses(workspace_id);
-CREATE INDEX idx_hypotheses_category ON vuln_hypotheses(category);
+CREATE INDEX IF NOT EXISTS idx_hypotheses_workspace ON vuln_hypotheses(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_hypotheses_category ON vuln_hypotheses(category);
 
 -- ── Fuzzing Sessions ───────────────────────
 CREATE TABLE IF NOT EXISTS fuzz_sessions (
@@ -145,7 +145,7 @@ CREATE TABLE IF NOT EXISTS vuln_chains (
     created_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_vuln_chains_workspace ON vuln_chains(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_vuln_chains_workspace ON vuln_chains(workspace_id);
 
 -- ── Tool Execution Log ─────────────────────
 CREATE TABLE IF NOT EXISTS tool_executions (
@@ -163,8 +163,8 @@ CREATE TABLE IF NOT EXISTS tool_executions (
     executed_at     TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_tool_exec_scan ON tool_executions(scan_id);
-CREATE INDEX idx_tool_exec_tool ON tool_executions(tool_name);
+CREATE INDEX IF NOT EXISTS idx_tool_exec_scan ON tool_executions(scan_id);
+CREATE INDEX IF NOT EXISTS idx_tool_exec_tool ON tool_executions(tool_name);
 
 -- ── Trigger: auto-update updated_at ────────
 CREATE OR REPLACE FUNCTION update_vuln_timestamp()
@@ -175,10 +175,11 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER trg_vuln_scans_updated
+CREATE OR REPLACE TRIGGER trg_vuln_scans_updated
     BEFORE UPDATE ON vuln_scans
     FOR EACH ROW EXECUTE FUNCTION update_vuln_timestamp();
 
-CREATE TRIGGER trg_vuln_findings_updated
+CREATE OR REPLACE TRIGGER trg_vuln_findings_updated
     BEFORE UPDATE ON vuln_findings
     FOR EACH ROW EXECUTE FUNCTION update_vuln_timestamp();
+
