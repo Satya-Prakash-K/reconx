@@ -193,42 +193,54 @@ class ReconAgent(SwarmAgent):
         endpoints = []
         visited = set()
 
-        async with httpx.AsyncClient(verify=False, timeout=10.0) as client:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+        }
+
+        async with httpx.AsyncClient(
+            verify=False,
+            timeout=15.0,
+            follow_redirects=True,
+            headers=headers,
+        ) as client:
             for target in targets:
                 if not target.startswith("http"):
                     target = f"http://{target}"
-                
+
                 state = self._reason(state, f"Crawling {target}")
                 try:
                     resp = await client.get(target)
-                    visited.add(target)
-                    
+                    visited.add(str(resp.url))  # use final URL after redirects
+
                     # Extract links using basic regex
                     links = re.findall(r'href=[\'"]?([^\'" >]+)', resp.text)
-                    links += re.findall(r'src=[\'"]?([^\'" >]+)', resp.text)
-                    
-                    base_domain = urlparse(target).netloc
-                    
+                    links += re.findall(r'action=[\'"]?([^\'" >]+)', resp.text)
+
+                    base_domain = urlparse(str(resp.url)).netloc
+
                     for link in links:
-                        full_url = urljoin(target, link)
+                        full_url = urljoin(str(resp.url), link)
                         parsed = urlparse(full_url)
-                        
+
                         # Only keep in-scope URLs
                         if parsed.netloc == base_domain:
-                            if full_url not in visited and not full_url.endswith(('.css', '.png', '.jpg', '.js', '.ico', '.svg')):
+                            if full_url not in visited and not full_url.endswith(
+                                ('.css', '.png', '.jpg', '.js', '.ico', '.svg', '.woff', '.woff2', '.ttf')
+                            ):
                                 visited.add(full_url)
-                                # Try to detect parameters
                                 params = dict(re.findall(r'([a-zA-Z0-9_]+)=([^&]*)', parsed.query))
                                 endpoints.append({
                                     "url": full_url.split('?')[0],
                                     "method": "GET",
                                     "params": params,
-                                    "priority": 8 if params else 4
+                                    "priority": 9 if params else 4
                                 })
-                                
+
                     state = self._reason(state, f"Found {len(endpoints)} endpoints from {target}")
                 except Exception as e:
-                    state = self._reason(state, f"Failed to crawl {target}: {str(e)}")
+                    state = self._reason(state, f"Failed to crawl {target}: {type(e).__name__}: {str(e)[:100]}")
 
         state["discovered_endpoints"] = endpoints
         state = self._reason(state, f"Total discovered {len(endpoints)} unique endpoints")
