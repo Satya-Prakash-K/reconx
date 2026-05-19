@@ -198,7 +198,7 @@ class ReconAgent(SwarmAgent):
                 if not target.startswith("http"):
                     target = f"http://{target}"
                 
-                state = self._reason(state, f"[recon] Crawling {target}")
+                state = self._reason(state, f"Crawling {target}")
                 try:
                     resp = await client.get(target)
                     visited.add(target)
@@ -226,9 +226,9 @@ class ReconAgent(SwarmAgent):
                                     "priority": 8 if params else 4
                                 })
                                 
-                    state = self._reason(state, f"[recon] Found {len(endpoints)} endpoints from {target}")
+                    state = self._reason(state, f"Found {len(endpoints)} endpoints from {target}")
                 except Exception as e:
-                    state = self._reason(state, f"[recon] Failed to crawl {target}: {str(e)}")
+                    state = self._reason(state, f"Failed to crawl {target}: {str(e)}")
 
         state["discovered_endpoints"] = endpoints
         state = self._reason(state, f"Total discovered {len(endpoints)} unique endpoints")

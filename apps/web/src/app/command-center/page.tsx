@@ -84,7 +84,13 @@ export default function CommandCenterPage() {
 
       if (reasoning.length > 0) setReasoningChain([...reasoning].reverse());
       setStats({ hypotheses: hypothesesCount, findings: findingsCount, endpoints: endpointsCount });
-      if (phase && phase !== "initializing") setAgents(makeAgents(phase, reasoning));
+
+      if (phase === "complete" || phase === "error") {
+        // Mark all agents as completed when scan finishes
+        setAgents(makeAgents("memory", reasoning).map(a => ({ ...a, status: "completed", progress: 100 })));
+      } else if (phase && phase !== "initializing") {
+        setAgents(makeAgents(phase, reasoning));
+      }
 
       const cycleMatch = [...reasoning].reverse().find(r => r.includes("Cycle"))?.match(/Cycle (\d+)/);
       if (cycleMatch) setCycle(parseInt(cycleMatch[1]));
