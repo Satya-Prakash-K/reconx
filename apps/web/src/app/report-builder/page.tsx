@@ -214,9 +214,6 @@ ${vulnKey === "lfi"
   };
 
 
-    setIsGenerating(false);
-  };
-
   const handleCopy = async () => {
     await navigator.clipboard.writeText(report);
     setCopied(true);
