@@ -56,37 +56,96 @@ async def _run_scan(workspace_id: str, session_id: str, targets: list[str], max_
         state = create_initial_state(workspace_id, session_id, targets, max_cycles)
 
         agents_in_order = [
-            ("planning",    PlannerAgent()),
-            ("recon",       ReconAgent()),
-            ("analysis",    AnalysisAgent()),
-            ("hypothesis",  HypothesisAgent()),
-            ("triage",      RiskAgent()),
-            ("memory",      MemoryAgent()),
+            ("planning",   PlannerAgent()),
+            ("recon",      ReconAgent()),
+            ("analysis",   AnalysisAgent()),
+            ("hypothesis", HypothesisAgent()),
+        ]
+        post_agents = [
+            ("triage",  RiskAgent()),
+            ("memory",  MemoryAgent()),
         ]
 
-        total_steps = max_cycles * len(agents_in_order)
+        # Count total steps including testing phase
+        total_steps = max_cycles * (len(agents_in_order) + 1 + len(post_agents))
         step = 0
 
+        def _snap(phase: str, prog: float) -> dict:
+            return {
+                "phase": phase, "progress": prog,
+                "details": {
+                    "reasoning_chain": state.get("reasoning_chain", []),
+                    "findings": len(state.get("findings", [])),
+                    "hypotheses": len(state.get("hypotheses", [])),
+                    "endpoints": len(state.get("discovered_endpoints", [])),
+                    "cycle": state.get("cycle", 0) + 1,
+                }
+            }
+
         for cycle in range(max_cycles):
+            # ── Recon + Analysis + Hypothesis ──────────────────────────────
             for phase, agent in agents_in_order:
+                # Broadcast BEFORE so UI shows ACTIVE during execution
+                await _broadcast(session_id, _snap(phase, round((step / total_steps) * 100, 1)))
                 state["phase"] = phase
                 state = await agent.execute(state)
                 step += 1
-                progress = round((step / total_steps) * 100, 1)
+                await _broadcast(session_id, _snap(phase, round((step / total_steps) * 100, 1)))
+                await asyncio.sleep(0.2)
 
-                snapshot = {
-                    "phase": phase,
-                    "progress": progress,
-                    "details": {
-                        "reasoning_chain": state.get("reasoning_chain", []),
-                        "findings": len(state.get("findings", [])),
-                        "hypotheses": len(state.get("hypotheses", [])),
-                        "endpoints": len(state.get("discovered_endpoints", [])),
-                        "cycle": cycle + 1,
-                    }
-                }
-                await _broadcast(session_id, snapshot)
-                await asyncio.sleep(0.3)  # Small yield so WS messages flush
+            # ── Testing phase: real HTTP XSS checks ─────────────────────────
+            step += 1
+            await _broadcast(session_id, _snap("testing", round((step / total_steps) * 100, 1)))
+            state["phase"] = "testing"
+            state["reasoning_chain"].append("[tester] Starting active vulnerability tests")
+
+            import httpx, urllib.parse
+            headers = {"User-Agent": "Mozilla/5.0 ReconX/2.0"}
+            async with httpx.AsyncClient(verify=False, timeout=5.0, follow_redirects=True, headers=headers) as client:
+                for h in state.get("hypotheses", []):
+                    url = h.get("url", "")
+                    param = h.get("param", "")
+                    cat = h.get("category", "")
+                    if not url or not param:
+                        continue
+                    if cat == "xss":
+                        payload = "<script>alert('reconx')</script>"
+                        test_url = f"{url}?{urllib.parse.quote(param)}={urllib.parse.quote(payload)}"
+                        state["reasoning_chain"].append(f"[tester] XSS probe → {url}?{param}=...")
+                        await _broadcast(session_id, _snap("testing", round((step / total_steps) * 100, 1)))
+                        try:
+                            resp = await client.get(test_url)
+                            if payload in resp.text:
+                                state["reasoning_chain"].append(f"[tester] ✅ CONFIRMED XSS on {url} param={param}")
+                                state["findings"].append({
+                                    "title": "Reflected XSS",
+                                    "affected_url": url,
+                                    "severity": "High",
+                                    "cvss_score": 7.1,
+                                    "exploitability_score": 8.0,
+                                    "impact_score": 6.0,
+                                    "description": f"Parameter '{param}' reflects unsanitized input.",
+                                })
+                                h["confirmed"] = True
+                            else:
+                                state["reasoning_chain"].append(f"[tester] ❌ XSS not reflected on {url}")
+                        except Exception as ex:
+                            state["reasoning_chain"].append(f"[tester] Probe failed: {type(ex).__name__}")
+                    await asyncio.sleep(0.1)
+
+            state["reasoning_chain"].append(f"[tester] Testing complete — {len(state.get('findings', []))} findings confirmed")
+            await _broadcast(session_id, _snap("testing", round((step / total_steps) * 100, 1)))
+            await asyncio.sleep(0.2)
+
+            # ── Triage + Memory ─────────────────────────────────────────────
+            for phase, agent in post_agents:
+                await _broadcast(session_id, _snap(phase, round((step / total_steps) * 100, 1)))
+                state["phase"] = phase
+                state = await agent.execute(state)
+                step += 1
+                await _broadcast(session_id, _snap(phase, round((step / total_steps) * 100, 1)))
+                await asyncio.sleep(0.2)
+
 
         # Final complete broadcast
         final = {
