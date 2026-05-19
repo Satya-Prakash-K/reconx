@@ -119,6 +119,13 @@ async def _run_scan(workspace_id: str, session_id: str, targets: list[str], max_
                 resp = await client.get(test_url)
                 return resp, test_url
 
+            def _already_found(title: str, url: str, param: str) -> bool:
+                """Deduplicate findings — skip if same vuln+url+param already recorded."""
+                return any(
+                    f.get("title") == title and f.get("affected_url") == url and f.get("parameter") == param
+                    for f in state.get("findings", [])
+                )
+
             async with httpx.AsyncClient(verify=False, timeout=8.0, follow_redirects=True, headers=headers) as client:
                 for h in state.get("hypotheses", []):
                     url = h.get("url", "")
@@ -136,15 +143,17 @@ async def _run_scan(workspace_id: str, session_id: str, targets: list[str], max_
                             state["reasoning_chain"].append(f"[tester] XSS probe → {url}?{param}=<script>")
                             resp, test_url = await probe(client, url, param, payload)
                             if payload in resp.text:
+                                title = "Reflected Cross-Site Scripting (XSS)"
                                 state["reasoning_chain"].append(f"[tester] ✅ CONFIRMED Reflected XSS on {url} param={param}")
-                                state["findings"].append({
-                                    "title": "Reflected Cross-Site Scripting (XSS)",
-                                    "affected_url": url, "parameter": param,
-                                    "severity": "High", "cvss_score": 7.1,
-                                    "exploitability_score": 8.0, "impact_score": 6.0,
-                                    "description": f"Parameter '{param}' reflects unsanitized input.",
-                                    "evidence": f"Payload reflected in response body",
-                                })
+                                if not _already_found(title, url, param):
+                                    state["findings"].append({
+                                        "title": title,
+                                        "affected_url": url, "parameter": param,
+                                        "severity": "High", "cvss_score": 7.1,
+                                        "exploitability_score": 8.0, "impact_score": 6.0,
+                                        "description": f"Parameter '{param}' reflects unsanitized input.",
+                                        "evidence": "Payload reflected in response body",
+                                    })
                                 h["confirmed"] = True
                             else:
                                 state["reasoning_chain"].append(f"[tester] ❌ XSS not reflected on {url}?{param}")
@@ -157,30 +166,34 @@ async def _run_scan(workspace_id: str, session_id: str, targets: list[str], max_
                             body_lower = resp.text.lower()
                             matched = next((e for e in SQLI_ERRORS if e in body_lower), None)
                             if matched:
+                                title = "SQL Injection"
                                 state["reasoning_chain"].append(f"[tester] ✅ CONFIRMED SQLi on {url} param={param} — error: {matched}")
-                                state["findings"].append({
-                                    "title": "SQL Injection",
-                                    "affected_url": url, "parameter": param,
-                                    "severity": "Critical", "cvss_score": 9.8,
-                                    "exploitability_score": 9.0, "impact_score": 9.0,
-                                    "description": f"Parameter '{param}' is injectable — SQL error detected: '{matched}'",
-                                    "evidence": matched,
-                                })
+                                if not _already_found(title, url, param):
+                                    state["findings"].append({
+                                        "title": title,
+                                        "affected_url": url, "parameter": param,
+                                        "severity": "Critical", "cvss_score": 9.8,
+                                        "exploitability_score": 9.0, "impact_score": 9.0,
+                                        "description": f"Parameter '{param}' is injectable — SQL error detected: '{matched}'",
+                                        "evidence": matched,
+                                    })
                                 h["confirmed"] = True
                             else:
                                 # Try boolean-based: original vs modified response size check
                                 resp_true, _ = await probe(client, url, param, "1 OR 1=1")
                                 resp_false, _ = await probe(client, url, param, "1 AND 1=2")
                                 if abs(len(resp_true.text) - len(resp_false.text)) > 50:
+                                    title = "Blind SQL Injection (Boolean-Based)"
                                     state["reasoning_chain"].append(f"[tester] ✅ CONFIRMED Blind SQLi on {url} param={param} (boolean-based)")
-                                    state["findings"].append({
-                                        "title": "Blind SQL Injection (Boolean-Based)",
-                                        "affected_url": url, "parameter": param,
-                                        "severity": "Critical", "cvss_score": 9.1,
-                                        "exploitability_score": 8.5, "impact_score": 9.0,
-                                        "description": f"Parameter '{param}' shows different responses for TRUE/FALSE conditions.",
-                                        "evidence": f"Response size diff: {abs(len(resp_true.text) - len(resp_false.text))} bytes",
-                                    })
+                                    if not _already_found(title, url, param):
+                                        state["findings"].append({
+                                            "title": title,
+                                            "affected_url": url, "parameter": param,
+                                            "severity": "Critical", "cvss_score": 9.1,
+                                            "exploitability_score": 8.5, "impact_score": 9.0,
+                                            "description": f"Parameter '{param}' shows different responses for TRUE/FALSE conditions.",
+                                            "evidence": f"Response size diff: {abs(len(resp_true.text) - len(resp_false.text))} bytes",
+                                        })
                                     h["confirmed"] = True
                                 else:
                                     state["reasoning_chain"].append(f"[tester] ❌ No SQLi detected on {url}?{param}")
@@ -191,15 +204,17 @@ async def _run_scan(workspace_id: str, session_id: str, targets: list[str], max_
                             state["reasoning_chain"].append(f"[tester] LFI probe → {url}?{param}=../../../etc/passwd")
                             resp, _ = await probe(client, url, param, lfi_payload)
                             if "root:" in resp.text or "bin/bash" in resp.text or "etc/passwd" in resp.text:
+                                title = "Local File Inclusion (LFI)"
                                 state["reasoning_chain"].append(f"[tester] ✅ CONFIRMED LFI on {url} param={param}")
-                                state["findings"].append({
-                                    "title": "Local File Inclusion (LFI)",
-                                    "affected_url": url, "parameter": param,
-                                    "severity": "Critical", "cvss_score": 9.3,
-                                    "exploitability_score": 9.0, "impact_score": 9.5,
-                                    "description": f"Parameter '{param}' includes local files — /etc/passwd disclosed.",
-                                    "evidence": "root: found in response",
-                                })
+                                if not _already_found(title, url, param):
+                                    state["findings"].append({
+                                        "title": title,
+                                        "affected_url": url, "parameter": param,
+                                        "severity": "Critical", "cvss_score": 9.3,
+                                        "exploitability_score": 9.0, "impact_score": 9.5,
+                                        "description": f"Parameter '{param}' includes local files — /etc/passwd disclosed.",
+                                        "evidence": "root: found in response",
+                                    })
                             else:
                                 state["reasoning_chain"].append(f"[tester] ❌ LFI not confirmed on {url}?{param}")
 

@@ -67,6 +67,24 @@ export default function CommandCenterPage() {
     return () => clearInterval(timer);
   }, [isScanning]);
 
+  // ── Local animation loop while scanning ───────────────────────────────────
+  // Cycles agents through active states so the UI shows progress
+  // even when backend REST updates arrive in batches
+  useEffect(() => {
+    if (!isScanning) return;
+    let agentIdx = 0;
+    const timer = setInterval(() => {
+      setAgents(AGENT_NAMES.map((name, i) => ({
+        name,
+        status: i < agentIdx ? "completed" : i === agentIdx ? "active" : "idle",
+        reasoning: i < agentIdx ? "Done" : i === agentIdx ? "Running..." : "Pending start...",
+        progress: i < agentIdx ? 100 : i === agentIdx ? 60 : 0,
+      })));
+      agentIdx = (agentIdx + 1) % AGENT_NAMES.length;
+    }, 2200);
+    return () => clearInterval(timer);
+  }, [isScanning]);
+
   useEffect(() => {
     if (!scanId) return;
     let stopped = false;
