@@ -47,34 +47,68 @@ export default function LiveFeedPage() {
   const [events, setEvents] = useState<ReconEvent[]>([]);
 
   useEffect(() => {
+    const buildEventsFromEngine = async (): Promise<ReconEvent[]> => {
+      try {
+        // Use the dedicated /events endpoint that aggregates findings + session data
+        const res = await fetch("http://localhost:8004/api/v1/agents/events");
+        if (res.ok) {
+          const data: any[] = await res.json();
+          if (data.length > 0) {
+            return data.map(e => ({
+              id: e.id || String(Math.random()),
+              timestamp: e.timestamp || new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+              type: (e.type || "endpoint") as ReconEvent["type"],
+              title: e.title,
+              detail: e.detail,
+              severity: e.severity || undefined,
+            }));
+          }
+        }
+      } catch {}
+      return [];
+    };
+
+
     const fetchEvents = async () => {
+      // Try autonomous engine first
+      const engineEvents = await buildEventsFromEngine();
+      if (engineEvents.length > 0) {
+        setEvents(engineEvents);
+        return;
+      }
+
+      // Try API Gateway
       try {
         const res = await fetch("http://localhost:8000/api/v1/events/recent?limit=20");
         if (res.ok) {
           const data = await res.json();
-          if (!data.events || data.events.length === 0) {
-             // Fallback to mock data if no events to avoid blank screen
-             setEvents(MOCK_FEED);
-             return;
+          const list = Array.isArray(data) ? data : data.events || [];
+          if (list.length > 0) {
+            setEvents(list.map((e: any) => ({
+              id: e.id,
+              timestamp: new Date(parseInt(e.timestamp) || Date.now())
+                .toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+              type: e.event_type === "vuln" || e.event_type === "finding" ? "finding"
+                : e.event_type === "asset" ? "asset" : "endpoint",
+              title: e.data?.title || e.data?.type || "Discovery Event",
+              detail: e.data?.detail || e.data?.url || JSON.stringify(e.data).slice(0, 50),
+              severity: e.data?.severity,
+            })));
+            return;
           }
-          setEvents(data.events.map((e: any) => ({
-            id: e.id,
-            timestamp: new Date(parseInt(e.timestamp)).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
-            type: e.event_type === "vuln" || e.event_type === "finding" ? "finding" : e.event_type === "asset" ? "asset" : "endpoint",
-            title: e.data.title || e.data.type || "Discovery Event",
-            detail: e.data.detail || e.data.url || JSON.stringify(e.data).slice(0, 50),
-            severity: e.data.severity
-          })));
         }
-      } catch (e) {
-        setEvents(MOCK_FEED);
-      }
+      } catch {}
+
+      // Final fallback: build events from mock to avoid blank screen
+      // (only shows if no real scans have been run yet)
+      setEvents(MOCK_FEED);
     };
-    
+
     fetchEvents();
     const timer = setInterval(fetchEvents, 3000);
     return () => clearInterval(timer);
   }, []);
+
 
   return (
     <div className="min-h-screen">

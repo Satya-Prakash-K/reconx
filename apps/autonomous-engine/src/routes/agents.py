@@ -333,6 +333,64 @@ async def get_latest_finding():
     return _all_findings[-1]
 
 
+@router.get("/events")
+async def get_live_events():
+    """Build a structured live event feed from all sessions' data."""
+    import time
+    events = []
+    now = time.strftime("%H:%M")
+
+    # Finding events from global store
+    for f in _all_findings:
+        events.append({
+            "id": f.get("id", str(len(events))),
+            "timestamp": now,
+            "type": "finding",
+            "title": f.get("title", "Vulnerability Found"),
+            "detail": f"{f.get('affected_url', '')}  —  param: {f.get('parameter', 'N/A')}  |  {f.get('evidence', '')}",
+            "severity": (f.get("severity") or "high").lower(),
+        })
+
+    # Session events from all active/completed sessions
+    for sid, snap in list(_sessions.items()):
+        details = snap.get("details", {})
+        reasoning: list = details.get("reasoning_chain", [])
+        phase = snap.get("phase", "")
+        endpoints = details.get("endpoints", 0)
+        hypotheses = details.get("hypotheses", 0)
+
+        if endpoints > 0:
+            events.append({
+                "id": f"ep-{sid[:8]}",
+                "timestamp": now,
+                "type": "endpoint",
+                "title": f"Discovered {endpoints} endpoints",
+                "detail": f"Session {sid[:8]}... — {phase} phase",
+            })
+
+        if hypotheses > 0:
+            events.append({
+                "id": f"hyp-{sid[:8]}",
+                "timestamp": now,
+                "type": "asset",
+                "title": f"Generated {hypotheses} attack hypotheses",
+                "detail": f"Session {sid[:8]}... — AI Hypothesis Engine",
+            })
+
+        # Pick notable reasoning messages as events
+        for msg in reasoning[-5:]:
+            if any(k in msg for k in ["✅ CONFIRMED", "Crawling", "Strategy:", "Starting cycle"]):
+                events.append({
+                    "id": f"log-{sid[:8]}-{len(events)}",
+                    "timestamp": now,
+                    "type": "change" if "Strategy" in msg or "cycle" in msg.lower() else "endpoint",
+                    "title": msg.split("]", 1)[-1].strip()[:80],
+                    "detail": f"Session {sid[:8]}...",
+                    "severity": "critical" if "✅ CONFIRMED" in msg else None,
+                })
+
+    return events
+
 # ── WebSocket: live streaming ───────────────────────────────────────────────
 
 @router.websocket("/ws/{session_id}")
